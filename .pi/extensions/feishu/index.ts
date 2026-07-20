@@ -191,7 +191,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
       await conversations.selectModel(selected.key, selected.provider, selected.modelId, async (reply) => {
         await transport?.replyText(action.messageId, reply);
       });
-      const models = conversations.getAvailableModels();
+      const models = await conversations.getAvailableModels();
       const currentModel = await conversations.getSelectedModel(selected.key);
       return buildModelCard(selected.key, models, currentModel);
     });
@@ -447,7 +447,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
     startStatusRefresh();
   });
 
-  if (bootConfig?.autoStart !== false) {
+  if (bootConfig && bootConfig.autoStart !== false) {
     if (process.env.PI_FEISHU_DAEMON === "1") {
       start().then((result) => {
         if (typeof result === "object" && result.status === "owned") {

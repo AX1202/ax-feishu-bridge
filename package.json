@@ -30,6 +30,7 @@
     "extensions": ["./.pi/extensions/feishu/index.ts"]
   },
   "scripts": {
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "node --test tests/*.test.mjs"
   }
 }
