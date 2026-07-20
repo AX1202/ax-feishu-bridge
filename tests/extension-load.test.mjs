@@ -10,11 +10,20 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const codingAgentEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piCli = join(dirname(codingAgentEntry), "cli.js");
 const extensionPath = join(repoRoot, ".pi/extensions/feishu/index.ts");
+const modelRuntimeExtensionPath = join(repoRoot, "tests/fixtures/model-runtime-extension.ts");
 const settleExtensionPath = join(repoRoot, "tests/fixtures/settle-extension.ts");
 
-function runFeishuCommand(command) {
+function runFeishuCommand(command, extraExtensions = []) {
   const homeDir = mkdtempSync(join(tmpdir(), "pi-feishu-lark-test-"));
+  const isolatedEnv = { ...process.env };
+  for (const key of Object.keys(isolatedEnv)) {
+    if (key.startsWith("FEISHU_") || key.startsWith("LARK_") || key.startsWith("PI_FEISHU_")) {
+      delete isolatedEnv[key];
+    }
+  }
+
   try {
+    const extraExtensionArgs = extraExtensions.flatMap((path) => ["-e", path]);
     return spawnSync(process.execPath, [
       piCli,
       "--no-extensions",
@@ -28,12 +37,13 @@ function runFeishuCommand(command) {
       extensionPath,
       "-e",
       settleExtensionPath,
+      ...extraExtensionArgs,
       "-p",
       command,
     ], {
       cwd: repoRoot,
       env: {
-        ...process.env,
+        ...isolatedEnv,
         HOME: homeDir,
         USERPROFILE: homeDir,
         PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
@@ -61,4 +71,9 @@ test("does not start the daemon before Feishu is configured", () => {
   const output = outputOf(result);
   assert.equal(result.status, 0, output || `Pi exited via ${result.signal || "unknown signal"}`);
   assert.doesNotMatch(output, /daemon spawn failed|Missing config/);
+});
+
+test("initializes the current Pi model runtime", () => {
+  const result = runFeishuCommand("/verify-feishu-model-runtime", [modelRuntimeExtensionPath]);
+  assert.equal(result.status, 0, outputOf(result) || `Pi exited via ${result.signal || "unknown signal"}`);
 });
