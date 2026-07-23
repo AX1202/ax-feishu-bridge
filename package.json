@@ -1,6 +1,6 @@
 {
   "name": "pi-feishu-lark",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Feishu/Lark bridge for Pi coding agent — chat with Pi from Feishu or Lark",
   "type": "module",
   "license": "MIT",
