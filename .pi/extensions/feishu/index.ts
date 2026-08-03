@@ -26,7 +26,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
   const bridgeStore = new FeishuBridgeStore();
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
-  const conversations = new ConversationManager(process.cwd(), bridge);
+  const bootConfig = loadConfig();
+  const conversations = new ConversationManager(process.cwd(), bridge, {
+    promptNotifySec: bootConfig?.promptNotifySec,
+    promptTimeoutSec: bootConfig?.promptTimeoutSec,
+  });
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore);
 
   const STATUS_KEY = "feishu-connection";
@@ -439,8 +443,6 @@ export default function feishuExtension(pi: ExtensionAPI) {
       }
     },
   });
-
-  const bootConfig = loadConfig();
 
   pi.on("session_start", async (_event, ctx) => {
     uiRef = ctx.ui as any;

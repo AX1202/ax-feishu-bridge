@@ -14,7 +14,7 @@ export const CHILD_SESSION_ENV = "PI_FEISHU_CHILD_SESSION";
 
 export const DEFAULT_CONFIG: Pick<
   FeishuConfig,
-  "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "language" | "reactEmoji" | "autoStart"
+  "domain" | "groupPolicy" | "cardActionMode" | "cardActionWebhookHost" | "cardActionWebhookPort" | "cardActionWebhookPath" | "language" | "reactEmoji" | "autoStart" | "promptNotifySec" | "promptTimeoutSec"
 > = {
   domain: "feishu",
   groupPolicy: "open",
@@ -25,6 +25,8 @@ export const DEFAULT_CONFIG: Pick<
   language: "zh",
   reactEmoji: "THUMBSUP",
   autoStart: true,
+  promptNotifySec: 180,
+  promptTimeoutSec: 0,
 };
 
 export function ensureRoot() {
@@ -66,6 +68,8 @@ export function loadConfig(): FeishuConfig | undefined {
       language: (process.env.FEISHU_LANGUAGE as "zh" | "en") || DEFAULT_CONFIG.language,
       reactEmoji: process.env.FEISHU_REACT_EMOJI || DEFAULT_CONFIG.reactEmoji,
       autoStart: process.env.FEISHU_AUTO_START ? process.env.FEISHU_AUTO_START !== "0" : DEFAULT_CONFIG.autoStart,
+      promptNotifySec: parseEnvSeconds(process.env.FEISHU_PROMPT_NOTIFY_SEC) ?? DEFAULT_CONFIG.promptNotifySec,
+      promptTimeoutSec: parseEnvSeconds(process.env.FEISHU_PROMPT_TIMEOUT_SEC) ?? DEFAULT_CONFIG.promptTimeoutSec,
     };
   }
   if (!existsSync(CONFIG_PATH)) return undefined;
@@ -83,7 +87,19 @@ export function loadConfig(): FeishuConfig | undefined {
     language: cfg.language || DEFAULT_CONFIG.language,
     reactEmoji: cfg.reactEmoji || DEFAULT_CONFIG.reactEmoji,
     autoStart: cfg.autoStart ?? DEFAULT_CONFIG.autoStart,
+    promptNotifySec: numberOr(cfg.promptNotifySec, DEFAULT_CONFIG.promptNotifySec),
+    promptTimeoutSec: numberOr(cfg.promptTimeoutSec, DEFAULT_CONFIG.promptTimeoutSec),
   };
+}
+
+function parseEnvSeconds(value: string | undefined) {
+  if (!value) return undefined;
+  const seconds = Number.parseInt(value, 10);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds : undefined;
+}
+
+function numberOr(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
 function parseCardActionMode(value: unknown): CardActionMode | undefined {
