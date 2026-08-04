@@ -239,7 +239,20 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `FEISHU_CARD_ACTION_WEBHOOK_HOST` | 卡片回调监听地址，默认 `0.0.0.0` |
 | `FEISHU_CARD_ACTION_WEBHOOK_PORT` | 卡片回调端口，默认 `3001` |
 | `FEISHU_CARD_ACTION_WEBHOOK_PATH` | 卡片回调路径，默认 `/webhook/card` |
+| `FEISHU_PROMPT_NOTIFY_SEC` | 长任务超过多少秒后在飞书发一条“仍在处理中”提示，默认 `180`，`0` 关闭 |
+| `FEISHU_PROMPT_TIMEOUT_SEC` | 任务硬超时秒数，超时后中止任务并报失败，默认 `0`（不设硬超时，长期运行也不会被报失败） |
 | `FEISHU_EXT_DEV`      | `1` 时显示本地开发标识 `DEV`           |
+
+### config.json 字段
+
+除了上面的环境变量，也可以在 `config.json` 里设置（优先级：环境变量 > config.json > 默认值）：
+
+| 字段                   | 说明                            |
+| --------------------- | ----------------------------- |
+| `promptNotifySec`     | 长任务超过多少秒后在飞书发一条“仍在处理中”提示，默认 `180`，`0` 关闭 |
+| `promptTimeoutSec`    | 任务硬超时秒数，超时后中止任务并报失败，默认 `0`（不设硬超时，长期运行也不会被报失败） |
+
+> 注意：长时间任务（例如跑测试、构建、批量处理）默认**不会**再被报为“任务失败”——到达 `promptNotifySec` 后只会在飞书里提示“任务仍在处理中”，任务卡片保持“进行中”，完成后正常送达结果。只有显式设置 `promptTimeoutSec` 后才会硬超时。修改后请执行 `/feishu restart` 生效。
 
 ***
 

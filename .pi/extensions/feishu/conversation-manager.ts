@@ -12,6 +12,7 @@ import {
 import type { FeishuBridgeRuntime } from "./bridge-runtime.js";
 import { CHILD_SESSION_ENV, ensureRoot, readJson, STATE_PATH, writeJson } from "./config.js";
 import { debugLog } from "./debug.js";
+import { waitForPrompt } from "./prompt-timeout.js";
 import type { ResumeScope, ResumeSessionPage } from "./cards.js";
 import type { TaskStatusSink } from "./task-status-card.js";
 import type { FeishuState } from "./types.js";
@@ -21,6 +22,13 @@ type ActiveRun = {
   runId?: string;
   stopped: boolean;
   status?: TaskStatusSink;
+};
+
+export type ConversationTimeouts = {
+  /** Seconds before a long-running task sends a "still working" notice (0 disables). Default 180. */
+  promptNotifySec?: number;
+  /** Hard prompt timeout in seconds; the session is aborted on expiry (0 disables / wait indefinitely). Default 0. */
+  promptTimeoutSec?: number;
 };
 
 export type StopConversationResult =
@@ -43,6 +51,7 @@ export class ConversationManager {
   constructor(
     private readonly cwd: string,
     private readonly bridge?: FeishuBridgeRuntime,
+    private readonly timeouts: ConversationTimeouts = {},
   ) {
     ensureRoot();
     this.state = readJson<FeishuState>(STATE_PATH, { sessions: {} });
@@ -84,12 +93,15 @@ export class ConversationManager {
       this.activeRuns.set(key, run);
       this.bridge?.beginFeishuInput(session.sessionId);
       try {
+        // If a previous turn is still streaming (e.g. the queue advanced while a
+        // long task was running), wait for it instead of erroring with
+        // "Agent is already processing".
+        if (session.isStreaming) {
+          debugLog("feishu.prompt.wait_for_idle", { key });
+          await session.waitForIdle();
+        }
         try {
-          await withTimeout(
-            session.prompt(userText, images.length ? { images } : undefined),
-            180_000,
-            "Pi 模型处理超时，请稍后重试；如果是图片消息，可以先切换到明确支持图片的模型。",
-          );
+          await this.runPromptWithTimeouts(session, userText, images, key, onReply);
         } catch (error) {
           if (run.stopped) {
             debugLog("feishu.prompt.stopped", { key });
@@ -356,14 +368,59 @@ export class ConversationManager {
   }
 
   private previousTurn(key: string) {
-    const previous = this.queues.get(key) || Promise.resolve();
-    return withTimeout(previous, 120_000, "上一条飞书消息处理超时，已跳过等待。")
-      .catch((error) => {
-        debugLog("feishu.queue.previous_timeout", {
-          key,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
+    // Wait for the previous message to finish. Long tasks are allowed to run as
+    // long as they need; the task card stays "running" and /stop can abort at any
+    // time. An arbitrary cap here caused follow-up messages to hit
+    // "Agent is already processing" while the previous turn was still running.
+    return this.queues.get(key) || Promise.resolve();
+  }
+
+  private notifyMs() {
+    const sec = this.timeouts?.promptNotifySec;
+    return typeof sec === "number" && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 0;
+  }
+
+  private hardTimeoutMs() {
+    const sec = this.timeouts?.promptTimeoutSec;
+    return typeof sec === "number" && Number.isFinite(sec) && sec > 0 ? sec * 1000 : 0;
+  }
+
+  /**
+   * Run session.prompt with a non-fatal "still working" notice threshold and an
+   * opt-in hard timeout. Long-running tasks are never reported as failed just
+   * because they take longer than a fixed window; only the configured hard
+   * timeout (promptTimeoutSec > 0) fails, and it aborts the session first so the
+   * run is not left busy in the background.
+   */
+  private async runPromptWithTimeouts(
+    session: AgentSession,
+    userText: string,
+    images: Array<{ type: "image"; data: string; mimeType: string }>,
+    key: string,
+    onReply: (text: string) => Promise<void>,
+  ) {
+    const notifyMs = this.notifyMs();
+    const hardMs = this.hardTimeoutMs();
+    const hardSec = Math.round(hardMs / 1000);
+    await waitForPrompt(session.prompt(userText, images.length ? { images } : undefined), {
+      notifyMs,
+      hardMs,
+      hardTimeoutMessage: `Pi 模型处理超时（超过 ${hardSec} 秒）仍未完成，已中止任务。可点击卡片「停止任务」或调大 config.json 中的 promptTimeoutSec。`,
+      onStillRunning: () => {
+        debugLog("feishu.prompt.notify_still_running", { key, elapsedMs: notifyMs });
+        // The task is not failing — it is still running. Tell the user instead
+        // of the old behaviour which reported a false failure.
+        void onReply("⏳ 任务仍在处理中，没有失败。请耐心等待，也可以点击任务卡片上的「停止任务」中止。")
+          .catch(() => undefined);
+      },
+      onHardTimeout: async () => {
+        debugLog("feishu.prompt.hard_timeout", { key, elapsedMs: hardMs });
+        // Abort the underlying run so the session is not left processing.
+        try {
+          await session.abort();
+        } catch {}
+      },
+    });
   }
 
   private async createSession(key: string): Promise<AgentSession> {
@@ -459,20 +516,6 @@ export class ConversationManager {
     } catch {
       return path;
     }
-  }
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

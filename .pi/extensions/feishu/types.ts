@@ -14,6 +14,10 @@ export type FeishuConfig = {
   language?: "zh" | "en";
   reactEmoji?: string;
   autoStart?: boolean;
+  /** Seconds before a long-running task sends a "still working" notice to chat (0 disables). Default 180. */
+  promptNotifySec?: number;
+  /** Hard prompt timeout in seconds; the session is aborted on expiry (0 disables / wait indefinitely). Default 0. */
+  promptTimeoutSec?: number;
 };
 
 export type ModelSelection = {
