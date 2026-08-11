@@ -1,3 +1,5 @@
+import { type ThinkingStatus } from "./thinking.js";
+
 export function modelLabel(model: any) {
   if (!model) return "未选择";
   return `${model.provider}/${model.id}`;
@@ -65,6 +67,54 @@ export function buildModelCard(key: string, models: any[], currentModel: any) {
     header: {
       template: "blue",
       title: { tag: "plain_text", content: "选择 Pi 模型" },
+    },
+    elements,
+  };
+}
+
+export function buildThinkingCard(key: string, currentModel: any, status: ThinkingStatus) {
+  const model = modelLabel(currentModel);
+  const elements: any[] = [
+    {
+      tag: "markdown",
+      content: status.source === "unavailable"
+        ? `当前模型：**${model}**\n无法从 Pi 读取这个模型可用的 thinking levels，因此未显示任何猜测的选项。`
+        : status.availableLevels.length === 0
+          ? `当前模型：**${model}**\nPi 未返回可用的 thinking levels。`
+          : `当前模型：**${model}**\nCurrent: **${escapeMarkdown(status.currentLevel || "(unknown)")}**\n以下选项由 Pi 当前会话直接返回。`,
+    },
+  ];
+
+  if (status.source === "pi") {
+    for (let i = 0; i < status.availableLevels.length; i += 3) {
+      const row = status.availableLevels.slice(i, i + 3);
+      elements.push({
+        tag: "action",
+        actions: row.map((level) => {
+          const isCurrent = level === status.currentLevel;
+          return {
+            tag: "button",
+            text: {
+              tag: "plain_text",
+              content: level,
+            },
+            type: isCurrent ? "primary" : "default",
+            value: {
+              action: "pi_feishu_select_thinking",
+              key,
+              level,
+            },
+          };
+        }),
+      });
+    }
+  }
+
+  return {
+    config: sharedCardConfig(),
+    header: {
+      template: "purple",
+      title: { tag: "plain_text", content: "调整思考强度" },
     },
     elements,
   };
@@ -170,6 +220,14 @@ export function parseModelActionValue(value: unknown): { key: string; provider: 
   if (raw.action !== "pi_feishu_select_model") return undefined;
   if (typeof raw.key !== "string" || typeof raw.provider !== "string" || typeof raw.modelId !== "string") return undefined;
   return { key: raw.key, provider: raw.provider, modelId: raw.modelId };
+}
+
+export function parseThinkingActionValue(value: unknown): { key: string; level: string } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as any;
+  if (raw.action !== "pi_feishu_select_thinking") return undefined;
+  if (typeof raw.key !== "string" || typeof raw.level !== "string" || !raw.level.trim()) return undefined;
+  return { key: raw.key, level: raw.level };
 }
 
 export function parseResumePageActionValue(value: unknown): { key: string; scope: ResumeScope; page: number } | undefined {

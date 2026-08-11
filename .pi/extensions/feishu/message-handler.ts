@@ -1,10 +1,17 @@
 import { detectCodeLanguage, decodeTextFile, detectImageMime, type FeishuImageInput, isSupportedImageMime, isSupportedTextFile } from "./attachments.js";
-import { buildModelCard, buildResumeCard } from "./cards.js";
+import { buildModelCard, buildResumeCard, buildThinkingCard } from "./cards.js";
 import type { ConversationManager } from "./conversation-manager.js";
 import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.js";
 import { debugLog } from "./debug.js";
-import { conversationKey, conversationLabel, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.js";
-import { TaskStatusCard } from "./task-status-card.js";
+import { loadConfig } from "./config.js";
+import {
+  clearRuntimeOverrides,
+  formatRuntimeConfig,
+  getRuntimeOverrides,
+  setRuntimeConfig,
+} from "./runtime-config.js";
+import { conversationKey, conversationLabel, buildPromptWithQuote, getCommandList, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.js";
+import { ReplyCard } from "./reply-card.js";
 import type { FeishuBridgeStore } from "./bridge-store.js";
 import type { FeishuTransport } from "./transport.js";
 import type { FeishuMessage } from "./types.js";
@@ -36,16 +43,36 @@ export class FeishuMessageHandler {
       this.seen.add(msg.messageId);
       if (this.seen.size > 2000) this.seen.clear();
 
-      const parsed = parseMessageInput(msg, transport.getBotOpenId());
-      const text = parsed.text || "";
+      const cfg = loadConfig();
+      const parsed = parseMessageInput(msg, transport.getBotOpenId(), {
+        parseInteractiveCards: cfg?.parseInteractiveCards !== false,
+      });
+      let text = parsed.text || "";
       const key = conversationKey(msg);
       this.bridgeStore?.bindConversation(key, msg);
+
+      // 展开引用/回复的父消息（告警卡片场景）
+      let quoted: { msgType: string; text: string } | null = null;
+      if (cfg?.includeQuotedMessage !== false && (msg.parentId || msg.rootId)) {
+        const q = await transport.getQuotedContext(
+          msg,
+          transport.getBotOpenId(),
+          cfg?.quotedMessageMaxChars ?? 8000,
+        );
+        if (q?.text) {
+          quoted = { msgType: q.msgType, text: q.text };
+          for (const a of q.attachments || []) parsed.attachments.push(a);
+        }
+      }
+
       debugLog("feishu.handler.parsed", {
         messageId: msg.messageId,
         key,
         chatMode: msg.chatMode,
         threadId: msg.threadId || msg.rootId || msg.parentId,
         textLength: text.length,
+        source: parsed.source,
+        quoted: Boolean(quoted),
         attachments: parsed.attachments.map((item) => ({
           kind: item.kind,
           fileKey: item.fileKey,
@@ -54,14 +81,16 @@ export class FeishuMessageHandler {
       });
 
       if (!parsed.attachments.length) {
-        if (!text) {
+        if (!text && !quoted) {
           await markFeishuMessage(msg.messageId, "ignored");
           return;
         }
-        const handled = await this.handleCommand(msg, key, text);
-        if (handled) {
-          await markFeishuMessage(msg.messageId, "replied");
-          return;
+        if (text) {
+          const handled = await this.handleCommand(msg, key, text);
+          if (handled) {
+            await markFeishuMessage(msg.messageId, "replied");
+            return;
+          }
         }
       }
 
@@ -97,12 +126,28 @@ export class FeishuMessageHandler {
         return;
       }
 
-      const prompt = buildPrompt(msg, text, fileSections, imageInputs, skippedImageCount, modelSupportsImage, downloadErrors);
-      const status = new TaskStatusCard(key, msg.messageId, transport);
-      await status.start();
-      await this.conversations.promptWithImages(key, prompt, imageInputs, async (reply) => {
-        await transport.replyText(msg.messageId, reply);
-      }, status);
+      const basePrompt = buildPrompt(msg, text, fileSections, imageInputs, skippedImageCount, modelSupportsImage, downloadErrors);
+      const prompt = buildPromptWithQuote(basePrompt, quoted);
+      // 单卡：全程 header；流式参数来自 config/env
+      const useStreaming = cfg?.streamingReply !== false;
+      const card = new ReplyCard(key, msg.messageId, transport, {
+        enabled: useStreaming,
+        printFrequencyMs: cfg?.streamPrintFrequencyMs,
+        printStep: cfg?.streamPrintStep,
+        pushIntervalMs: cfg?.streamPushIntervalMs,
+      });
+      await card.start();
+
+      await this.conversations.promptWithImages(
+        key,
+        prompt,
+        imageInputs,
+        async (reply) => {
+          await card.completeWithAnswer(reply || "（无内容）");
+        },
+        card,
+        useStreaming ? (delta) => card.append(delta) : undefined,
+      );
       await markFeishuMessage(msg.messageId, "replied");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -137,6 +182,15 @@ export class FeishuMessageHandler {
       return true;
     }
 
+    if (command.name === "thinking") {
+      const [currentModel, thinking] = await Promise.all([
+        this.conversations.getSelectedModel(key),
+        this.conversations.getThinkingStatus(key),
+      ]);
+      await transport.replyCard(msg.messageId, buildThinkingCard(key, currentModel, thinking));
+      return true;
+    }
+
     if (command.name === "resume") {
       const page = await this.conversations.listResumeSessions(key, "current", 0);
       await transport.replyCard(msg.messageId, buildResumeCard(page));
@@ -154,6 +208,100 @@ export class FeishuMessageHandler {
       await this.conversations.switchWorkspace(key, command.path, async (reply) => {
         await transport.replyText(msg.messageId, reply);
       });
+      return true;
+    }
+
+    if (command.name === "status") {
+      const st = this.conversations.getStatus(key);
+      const ctx = await this.conversations.getContextStatus(key);
+      const model = await this.conversations.getActualModel(key);
+      const thinking = await this.conversations.getThinkingStatus(key);
+      const formatTokens = (n: number) => {
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(0)}k`;
+        return `${n}`;
+      };
+      const ctxLine = ctx && ctx.tokens !== null && ctx.contextWindow
+        ? `${(ctx.percent ?? 0).toFixed(1)}% / ${formatTokens(ctx.contextWindow)} (↑${formatTokens(ctx.tokens ?? 0)} tokens)`
+        : "暂无数据（发送一条消息后才会显示）";
+      const stateLine = st.hasActiveRun
+        ? (st.activeStopped ? "⏹ 已停止" : "🟢 正在生成回复")
+        : "⚪ 空闲";
+      await transport.replyText(
+        msg.messageId,
+        [
+          "📊 当前状态",
+          "",
+          `状态: ${stateLine}`,
+          `目录: ${st.cwd}`,
+          `模型: ${model}`,
+          `thinking: ${thinking.source === "pi" ? thinking.currentLevel || "(unknown)" : "(unavailable)"}`,
+          `上下文: ${ctxLine}`,
+        ].join("\n"),
+      );
+      return true;
+    }
+
+    if (command.name === "commands") {
+      await transport.replyText(msg.messageId, `可用命令：\n${getCommandList()}`);
+      return true;
+    }
+
+    if (command.name === "config") {
+      if (msg.chatType !== "p2p") {
+        await transport.replyText(
+          msg.messageId,
+          "为避免群聊成员意外修改机器人配置，/config 仅支持在与机器人的私聊中使用。",
+        );
+        return true;
+      }
+      if (command.clearTarget) {
+        const cleared = clearRuntimeOverrides(command.clearTarget);
+        if (cleared.ok === false) {
+          await transport.replyText(msg.messageId, `❌ ${cleared.error}`);
+          return true;
+        }
+        const cfg = loadConfig();
+        await transport.replyText(
+          msg.messageId,
+          [
+            command.clearTarget === "all" ? "已清除全部 runtime overrides" : `已清除 override: ${command.clearTarget}`,
+            "",
+            cfg ? formatRuntimeConfig(cfg, getRuntimeOverrides()) : "配置不可用",
+          ].join("\n"),
+        );
+        return true;
+      }
+      if (command.key) {
+        if (command.value === undefined || command.value === "") {
+          await transport.replyText(
+            msg.messageId,
+            `用法: /config ${command.key} <value>\n或: /config clear ${command.key}`,
+          );
+          return true;
+        }
+        const set = setRuntimeConfig(command.key, command.value);
+        if (set.ok === false) {
+          await transport.replyText(msg.messageId, `❌ ${set.error}`);
+          return true;
+        }
+        const cfg = loadConfig();
+        await transport.replyText(
+          msg.messageId,
+          [
+            `✅ 已更新 ${set.key} = ${Array.isArray(set.value) ? set.value.join(", ") : String(set.value)}`,
+            "已热更新并落盘（runtime-overrides.json）",
+            "",
+            cfg ? formatRuntimeConfig(cfg, getRuntimeOverrides()) : "",
+          ].filter(Boolean).join("\n"),
+        );
+        return true;
+      }
+      const cfg = loadConfig();
+      await transport.replyText(
+        msg.messageId,
+        cfg ? formatRuntimeConfig(cfg, getRuntimeOverrides()) : "配置不可用（缺少 FEISHU_APP_ID/SECRET）",
+      );
       return true;
     }
 

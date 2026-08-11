@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from 
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { buildModelCard, buildResumeCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue } from "./cards.js";
+import { Type } from "typebox";
+import { buildModelCard, buildResumeCard, buildThinkingCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue, parseThinkingActionValue } from "./cards.js";
 import { BRIDGE_PATH, CHILD_SESSION_ENV, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, writeJson } from "./config.js";
 import { debugLog } from "./debug.js";
 import { FeishuBridgeRuntime } from "./bridge-runtime.js";
@@ -12,7 +13,15 @@ import { FeishuDelivery } from "./delivery.js";
 import { acquireGatewayLock, gatewayLockPath, readGatewayOwner, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
 import { FeishuMessageHandler } from "./message-handler.js";
 import { runSetup, uiConfirm } from "./setup.js";
-import { buildTaskStatusCard, parseStopTaskActionValue } from "./task-status-card.js";
+import { buildCardKitCardJson } from "./card-builder.js";
+import { buildReplyCard, parseStopTaskActionValue } from "./reply-card.js";
+import {
+  RUNTIME_CONFIG_KEYS,
+  clearRuntimeOverrides,
+  formatRuntimeConfig,
+  getRuntimeOverrides,
+  setRuntimeConfig,
+} from "./runtime-config.js";
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
 
@@ -21,15 +30,18 @@ export default function feishuExtension(pi: ExtensionAPI) {
     return;
   }
 
+  // 模型可读写白名单配置（热更新 + 落盘）
+  registerFeishuConfigTools(pi);
+
   let transport: FeishuTransport | undefined;
   let gatewayLock: GatewayLockHandle | undefined;
   const bridgeStore = new FeishuBridgeStore();
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
-  const bootConfig = loadConfig();
+  const initialConfig = loadConfig();
   const conversations = new ConversationManager(process.cwd(), bridge, {
-    promptNotifySec: bootConfig?.promptNotifySec,
-    promptTimeoutSec: bootConfig?.promptTimeoutSec,
+    promptNotifySec: initialConfig?.promptNotifySec,
+    promptTimeoutSec: initialConfig?.promptTimeoutSec,
   });
   const messageHandler = new FeishuMessageHandler(conversations, () => transport, bridgeStore);
 
@@ -156,9 +168,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
           cardMessageId: action.messageId,
           chatId: action.chatId,
         });
-        const result = await conversations.stopConversation(stopTask.key, async (reply) => {
-          await transport?.replyText(action.messageId, reply);
-        }, stopTask.runId);
+        // 停止时由 ReplyCard.stopImmediately 更新同一张卡；回调不再另发文本
+        const result = await conversations.stopConversation(stopTask.key, async () => undefined, stopTask.runId);
         const status = result.status === "stopped"
           ? "stopped"
           : result.status === "failed"
@@ -170,11 +181,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
           cardMessageId: action.messageId,
           result: result.status,
         });
-        return buildTaskStatusCard({
+        // CardKit 流式卡是 schema 2.0；回调必须返回 2.0，否则会 200830/200671
+        // body 优先用 cardkit.close() 已写入的累计文本，避免覆盖已输出内容
+        return buildCardKitCardJson({
+          status,
+          body: "body" in result ? result.body : result.message || "已停止",
           key: stopTask.key,
           runId: stopTask.runId,
-          status,
-          phase: result.message,
+          streaming: false,
         });
       }
       const resumePage = parseResumePageActionValue(action.value);
@@ -189,6 +203,17 @@ export default function feishuExtension(pi: ExtensionAPI) {
         });
         const page = await conversations.listResumeSessions(resumeSelect.key, resumeSelect.scope, resumeSelect.page);
         return buildResumeCard(page);
+      }
+      const selectedThinking = parseThinkingActionValue(action.value);
+      if (selectedThinking) {
+        await conversations.selectThinkingLevel(selectedThinking.key, selectedThinking.level, async (reply) => {
+          await transport?.replyText(action.messageId, reply);
+        });
+        const [currentModel, thinking] = await Promise.all([
+          conversations.getSelectedModel(selectedThinking.key),
+          conversations.getThinkingStatus(selectedThinking.key),
+        ]);
+        return buildThinkingCard(selectedThinking.key, currentModel, thinking);
       }
       const selected = parseModelActionValue(action.value);
       if (!selected) return;
@@ -444,12 +469,14 @@ export default function feishuExtension(pi: ExtensionAPI) {
     },
   });
 
+  const bootConfig = loadConfig();
+
   pi.on("session_start", async (_event, ctx) => {
     uiRef = ctx.ui as any;
     startStatusRefresh();
   });
 
-  if (bootConfig && bootConfig.autoStart !== false) {
+  if (bootConfig?.autoStart) {
     if (process.env.PI_FEISHU_DAEMON === "1") {
       start().then((result) => {
         if (typeof result === "object" && result.status === "owned") {
@@ -601,4 +628,88 @@ function tryAcquireSpawnLock(lockPath: string) {
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function textToolResult(text: string) {
+  return {
+    content: [{ type: "text" as const, text }],
+    details: {},
+  };
+}
+
+function registerFeishuConfigTools(pi: ExtensionAPI) {
+  pi.registerTool({
+    name: "feishu_config_get",
+    label: "Feishu Config Get",
+    description:
+      "Read Feishu runtime config whitelist (groupPolicy, groupKeywords, streaming, etc). Secrets are never returned.",
+    promptSnippet: "Read Feishu bot runtime settings (keywords, mention policy, streaming).",
+    parameters: Type.Object({}),
+    async execute() {
+      const cfg = loadConfig();
+      if (!cfg) {
+        return textToolResult("Feishu config unavailable (missing FEISHU_APP_ID/SECRET).");
+      }
+      return textToolResult(formatRuntimeConfig(cfg, getRuntimeOverrides()));
+    },
+  });
+
+  pi.registerTool({
+    name: "feishu_config_set",
+    label: "Feishu Config Set",
+    description:
+      `Set a Feishu runtime config key. HOT-RELOADS immediately and persists to runtime-overrides.json — NEVER tell the user to restart the container or edit docker-compose.yml. Allowed keys: ${RUNTIME_CONFIG_KEYS.join(", ")}. Do not set appId/appSecret.`,
+    promptSnippet: "Update Feishu group trigger keywords / streaming / emoji at runtime (no restart).",
+    promptGuidelines: [
+      "Only use whitelisted keys; never attempt to set app credentials.",
+      "After set, subsequent group messages use the new settings immediately — no docker restart.",
+      "Never edit docker-compose.yml or env files for these settings; use this tool only.",
+    ],
+    parameters: Type.Object({
+      key: Type.String({ description: `One of: ${RUNTIME_CONFIG_KEYS.join(", ")}` }),
+      value: Type.String({ description: "New value (keywords comma-separated; bool true/false; numbers as digits)" }),
+    }),
+    async execute(_id, params) {
+      const key = String((params as any)?.key || "").trim();
+      const value = String((params as any)?.value ?? "");
+      if (!key) return textToolResult("key is required");
+      const result = setRuntimeConfig(key, value);
+      if (result.ok === false) return textToolResult(`Error: ${result.error}`);
+      const cfg = loadConfig();
+      return textToolResult(
+        [
+          `Updated ${result.key} = ${Array.isArray(result.value) ? result.value.join(", ") : String(result.value)}`,
+          "Hot-reloaded and persisted (runtime-overrides.json).",
+          "",
+          cfg ? formatRuntimeConfig(cfg, getRuntimeOverrides()) : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    },
+  });
+
+  pi.registerTool({
+    name: "feishu_config_clear",
+    label: "Feishu Config Clear",
+    description: "Clear one runtime override key or all overrides (reverts to env/base config).",
+    parameters: Type.Object({
+      key: Type.Optional(Type.String({ description: "Whitelist key, or omit/all for all overrides" })),
+    }),
+    async execute(_id, params) {
+      const target = String((params as any)?.key || "all").trim() || "all";
+      const result = clearRuntimeOverrides(target);
+      if (result.ok === false) return textToolResult(`Error: ${result.error}`);
+      const cfg = loadConfig();
+      return textToolResult(
+        [
+          target === "all" ? "Cleared all runtime overrides." : `Cleared override: ${target}`,
+          "",
+          cfg ? formatRuntimeConfig(cfg, getRuntimeOverrides()) : "",
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      );
+    },
+  });
 }

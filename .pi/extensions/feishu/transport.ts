@@ -1,6 +1,13 @@
 import type { FeishuCardAction, FeishuConfig, FeishuMessage } from "./types.js";
+import { loadConfig } from "./config.js";
 import { debugLog } from "./debug.js";
+import {
+  extractPlainTextForTrigger,
+  shouldAcceptGroupMessage,
+} from "./group-trigger.js";
 import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./rich-text.js";
+import { withRetry } from "./retry.js";
+import { extractTextFromMsgType } from "./interactive-card.js";
 import { FeishuCardActionWebhook } from "./card-action-webhook.js";
 
 const TEXT_CHUNK_MAX_BYTES = 120 * 1024;
@@ -19,15 +26,31 @@ export class FeishuTransport {
   private running = false;
   private botOpenId: string | undefined;
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
+  /** 本 bot 发出的消息 id，用于 alsoOnReply 判定 parent/root */
+  private readonly botOutboundMessageIds = new Set<string>();
+  private readonly botOutboundMessageOrder: string[] = [];
   private readonly markdownCopySources = new Map<string, string>();
   private readonly markdownCopySourceOrder: string[] = [];
   private markdownCopySeq = 0;
+
+  private sendRetries() {
+    return this.config.sendMaxRetries ?? 2;
+  }
+
+  private async apiCall<T = any>(label: string, fn: () => Promise<T>): Promise<T> {
+    return withRetry(fn, { maxRetries: this.sendRetries(), label });
+  }
 
   constructor(
     private readonly config: FeishuConfig,
     private readonly onMessage: (msg: FeishuMessage) => Promise<void>,
     private readonly onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>,
   ) {}
+
+  /** 热读有效配置（含 runtime-overrides）；失败回退 constructor 快照 */
+  private effectiveConfig(): FeishuConfig {
+    return loadConfig() || this.config;
+  }
 
   async start() {
     if (this.running) return;
@@ -122,22 +145,55 @@ export class FeishuTransport {
     const message = event?.message;
     const sender = event?.sender;
     if (!message) return;
-    if (sender?.sender_type === "bot") return;
+
+    const cfg = this.effectiveConfig();
+    if (sender?.sender_type === "bot" && cfg.ignoreBotMessages !== false) {
+      debugLog("feishu.message.ignored_bot", {
+        messageId: message.message_id,
+        messageType: message.message_type,
+      });
+      return;
+    }
 
     debugLog("feishu.message.received", {
       messageId: message.message_id,
       chatType: message.chat_type,
       messageType: message.message_type,
+      senderType: sender?.sender_type || "unknown",
       hasRootId: Boolean(message.root_id),
       hasParentId: Boolean(message.parent_id),
       hasThreadId: Boolean(message.thread_id),
       content: message.content || "",
     });
 
-    if (message.chat_type === "group" && this.config.groupPolicy === "mention") {
-      if (!this.isMentioned(message)) {
-        debugLog("feishu.message.ignored_not_mentioned", { messageId: message.message_id });
+    if (message.chat_type === "group") {
+      const text = extractPlainTextForTrigger(message.message_type || "text", message.content || "");
+      const mentioned = this.isMentioned(message);
+      const replyToBot = this.isReplyToBot(message);
+      const decision = shouldAcceptGroupMessage({
+        chatType: "group",
+        groupPolicy: cfg.groupPolicy,
+        mentioned,
+        text,
+        keywords: cfg.groupKeywords || [],
+        alsoOnReply: Boolean(cfg.groupAlsoOnReply),
+        replyToBot,
+      });
+      if (!decision.accept) {
+        debugLog(`feishu.message.ignored_${decision.reason}`, {
+          messageId: message.message_id,
+          reason: decision.reason,
+          mentioned,
+          replyToBot,
+          keywords: cfg.groupKeywords || [],
+        });
         return;
+      }
+      if (decision.reason !== "open") {
+        debugLog("feishu.message.trigger", {
+          messageId: message.message_id,
+          reason: decision.reason,
+        });
       }
     }
 
@@ -156,8 +212,8 @@ export class FeishuTransport {
       mentions: message.mentions,
     };
 
-    if (this.config.reactEmoji) {
-      void this.addReaction(msg.messageId, this.config.reactEmoji);
+    if (cfg.reactEmoji) {
+      void this.addReaction(msg.messageId, cfg.reactEmoji);
     }
     debugLog("feishu.message.dispatch", { messageId: msg.messageId });
     void this.onMessage(msg).catch((error) => {
@@ -198,11 +254,9 @@ export class FeishuTransport {
   }
 
   private async handleCardActionAction(action: FeishuCardAction, mode: "ws" | "webhook") {
-    const result = await this.onCardAction(action);
-    if (mode === "ws" && result) {
-      await this.updateCard(action.messageId, result);
-    }
-    return result;
+    // 仅返回回调响应即可；不要再 im.message.patch 一份 schema 1.0，
+    // 否则会把 CardKit schema 2.0 卡改坏（200830 / 前端 200671）。
+    return this.onCardAction(action);
   }
 
   private cardActionMode() {
@@ -215,6 +269,31 @@ export class FeishuTransport {
     const botOpenId = this.botOpenId;
     if (!botOpenId) return true;
     return mentions.some((m: any) => m?.id?.open_id === botOpenId || m?.id?.union_id === botOpenId);
+  }
+
+  /** 是否回复/跟帖到本 bot 发出的消息 */
+  private isReplyToBot(message: any): boolean {
+    const parentId = typeof message.parent_id === "string" ? message.parent_id : "";
+    const rootId = typeof message.root_id === "string" ? message.root_id : "";
+    if (parentId && this.botOutboundMessageIds.has(parentId)) return true;
+    if (rootId && this.botOutboundMessageIds.has(rootId)) return true;
+    return false;
+  }
+
+  /** 供 ReplyCard / CardKit 登记出站消息 id */
+  rememberOutboundMessageId(messageId: string) {
+    this.rememberBotOutboundMessageId(messageId);
+  }
+
+  private rememberBotOutboundMessageId(messageId: string | undefined) {
+    if (!messageId) return;
+    if (this.botOutboundMessageIds.has(messageId)) return;
+    this.botOutboundMessageIds.add(messageId);
+    this.botOutboundMessageOrder.push(messageId);
+    while (this.botOutboundMessageOrder.length > 500) {
+      const oldest = this.botOutboundMessageOrder.shift();
+      if (oldest) this.botOutboundMessageIds.delete(oldest);
+    }
   }
 
   private async getChatMode(chatId: string, chatType: "p2p" | "group"): Promise<"p2p" | "group" | "topic"> {
@@ -258,22 +337,37 @@ export class FeishuTransport {
     debugLog("feishu.reply.text", { messageId, length: text.length });
     const chunks = splitText(text, TEXT_CHUNK_MAX_BYTES);
     for (const chunk of chunks) {
-      await this.sdkClient.im.message.reply({
+      const res = await this.apiCall("feishu.reply.text", () => this.sdkClient.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "text", content: JSON.stringify({ text: chunk }) },
-      });
+      }));
+      this.rememberBotOutboundMessageId((res as any)?.data?.message_id as string | undefined);
     }
   }
 
-  async replyPlainText(messageId: string, text: string) {
+  async replyPlainText(messageId: string, text: string): Promise<string | undefined> {
     debugLog("feishu.reply.plain_text", { messageId, length: text.length });
     const chunks = splitText(text, TEXT_CHUNK_MAX_BYTES);
+    let lastId: string | undefined;
     for (const chunk of chunks) {
-      await this.sdkClient.im.message.reply({
+      const res = await this.apiCall("feishu.reply.plain_text", () => this.sdkClient.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "text", content: JSON.stringify({ text: chunk }) },
-      });
+      }));
+      lastId = (res as any)?.data?.message_id as string | undefined;
+      this.rememberBotOutboundMessageId(lastId);
     }
+    return lastId;
+  }
+
+  /** 更新已发出的 text 消息正文 */
+  async updateText(messageId: string, text: string) {
+    debugLog("feishu.update.text", { messageId, length: text.length });
+    const chunk = splitText(text || "…", TEXT_CHUNK_MAX_BYTES)[0] || "…";
+    await this.apiCall("feishu.update.text", () => this.sdkClient.im.v1.message.patch({
+      path: { message_id: messageId },
+      data: { content: JSON.stringify({ text: chunk }) },
+    }));
   }
 
   async sendText(chatId: string, text: string) {
@@ -289,38 +383,41 @@ export class FeishuTransport {
     debugLog("feishu.send.text", { chatId, length: text.length });
     const chunks = splitText(text, TEXT_CHUNK_MAX_BYTES);
     for (const chunk of chunks) {
-      await this.sdkClient.im.message.create({
+      const res = await this.apiCall("feishu.send.text", () => this.sdkClient.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
           msg_type: "text",
           content: JSON.stringify({ text: chunk }),
         },
-      });
+      }));
+      this.rememberBotOutboundMessageId((res as any)?.data?.message_id as string | undefined);
     }
   }
 
   async replyMarkdownCard(messageId: string, text: string) {
     debugLog("feishu.reply.markdown_card", { messageId, length: text.length });
     for (const { card } of this.buildMarkdownCardPartsWithCopySources(text)) {
-      await this.sdkClient.im.message.reply({
+      const res = await this.apiCall("feishu.reply.markdown_card", () => this.sdkClient.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "interactive", content: JSON.stringify(card) },
-      });
+      }));
+      this.rememberBotOutboundMessageId((res as any)?.data?.message_id as string | undefined);
     }
   }
 
   async sendMarkdownCard(chatId: string, text: string) {
     debugLog("feishu.send.markdown_card", { chatId, length: text.length });
     for (const { card } of this.buildMarkdownCardPartsWithCopySources(text)) {
-      await this.sdkClient.im.message.create({
+      const res = await this.apiCall("feishu.send.markdown_card", () => this.sdkClient.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
           msg_type: "interactive",
           content: JSON.stringify(card),
         },
-      });
+      }));
+      this.rememberBotOutboundMessageId((res as any)?.data?.message_id as string | undefined);
     }
   }
 
@@ -354,17 +451,18 @@ export class FeishuTransport {
   async replyPost(messageId: string, text: string) {
     debugLog("feishu.reply.post", { messageId, length: text.length });
     for (const post of buildPostMessages(text, this.config.language)) {
-      await this.sdkClient.im.message.reply({
+      const res = await this.sdkClient.im.message.reply({
         path: { message_id: messageId },
         data: { msg_type: "post", content: JSON.stringify(post) },
       });
+      this.rememberBotOutboundMessageId((res as any)?.data?.message_id as string | undefined);
     }
   }
 
   async sendPost(chatId: string, text: string) {
     debugLog("feishu.send.post", { chatId, length: text.length });
     for (const post of buildPostMessages(text, this.config.language)) {
-      await this.sdkClient.im.message.create({
+      const res = await this.sdkClient.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: chatId,
@@ -372,6 +470,7 @@ export class FeishuTransport {
           content: JSON.stringify(post),
         },
       });
+      this.rememberBotOutboundMessageId((res as any)?.data?.message_id as string | undefined);
     }
   }
 
@@ -381,7 +480,9 @@ export class FeishuTransport {
       path: { message_id: messageId },
       data: { msg_type: "interactive", content: JSON.stringify(card) },
     });
-    return res?.data?.message_id as string | undefined;
+    const id = res?.data?.message_id as string | undefined;
+    this.rememberBotOutboundMessageId(id);
+    return id;
   }
 
   async updateCard(messageId: string, card: object) {
@@ -390,6 +491,44 @@ export class FeishuTransport {
       path: { message_id: messageId },
       data: { content: JSON.stringify(card) },
     });
+  }
+
+  /** 拉取单条消息（用于展开 parent/root 引用卡片） */
+  async getMessage(messageId: string): Promise<{ messageId: string; msgType: string; content: string; chatId?: string } | undefined> {
+    if (!messageId) return undefined;
+    try {
+      const res = await this.apiCall<any>("feishu.get_message", () =>
+        this.sdkClient.im.message.get({ path: { message_id: messageId } }),
+      );
+      const item = res?.data?.items?.[0] || res?.data?.message || res?.data;
+      if (!item) return undefined;
+      const body = item.body || item;
+      const msgType = body.message_type || body.msg_type || item.message_type || item.msg_type || "unknown";
+      const content = typeof body.content === "string" ? body.content : JSON.stringify(body.content || {});
+      return {
+        messageId: body.message_id || item.message_id || messageId,
+        msgType,
+        content,
+        chatId: body.chat_id || item.chat_id,
+      };
+    } catch (error) {
+      debugLog("feishu.get_message.error", {
+        messageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  async getQuotedContext(msg: { parentId?: string; rootId?: string }, botOpenId?: string, maxChars = 8000) {
+    const targetId = msg.parentId || msg.rootId;
+    if (!targetId) return null;
+    const parent = await this.getMessage(targetId);
+    if (!parent) return null;
+    const extracted = extractTextFromMsgType(parent.msgType, parent.content, botOpenId);
+    let text = extracted.text.trim();
+    if (text.length > maxChars) text = `${text.slice(0, maxChars)}\n…(truncated)`;
+    return { msgType: parent.msgType, text, attachments: extracted.attachments };
   }
 
   async downloadMessageResource(messageId: string, fileKey: string, type: "image" | "file"): Promise<{ bytes: Buffer; mimeType?: string }> {

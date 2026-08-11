@@ -32,8 +32,10 @@ B站：<https://space.bilibili.com/4489397>
   - `open`：群里和话题里可直接回复，不需要 @，还需手动在飞书开发者后台开启机器人“**获取群组中所有消息”的权限**
   - `mention`：只有 `@` 机器人时才回复
 - 支持图片、代码文件、文本文件等附件发送
-- 支持飞书内切换对话模型
-- 支持显示实时 Pi 任务执行状态
+- 支持解析飞书 interactive 告警卡片；回复告警卡片时会一并带入原卡片内容
+- 支持群聊关键词触发、回复机器人消息继续追问
+- 支持飞书内切换对话模型和思考强度
+- 回复过程使用同一张卡片展示，可逐字流式输出、停止、完成或失败
 - 支持渲染显示 Markdown 格式内容
 - Pi agent 关闭后，仍有后台常驻服务可以对话，pi agent无需前台运行。
 
@@ -195,9 +197,15 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `/new`   | 为当前会话新建一个 Pi 会话      |
 | `/resume` | 打开历史会话列表，切回以前的 Pi 会话 |
 | `/model` | 打开模型选择卡片，切换当前会话使用的模型 |
+| `/thinking` | 打开思考强度选择卡片；原样显示 Pi 当前模型返回的档位 |
 | `/stop`  | 停止当前这条回复的处理          |
 | `/workspace` | 查看当前会话绑定的工作区      |
 | `/workspace /path/to/project` | 把当前会话切换到指定工作区，下一条消息生效 |
+| `/status` | 查看当前会话的工作状态、模型、思考强度和上下文占用 |
+| `/commands` | 查看机器人支持的全部命令 |
+| `/config` | 查看运行时配置（仅限与机器人的私聊） |
+| `/config groupKeywords 关键词1,关键词2` | 设置群聊关键词触发并立即生效 |
+| `/config clear groupKeywords` | 清除某项运行时配置覆盖 |
 
 ***
 
@@ -232,8 +240,11 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `FEISHU_APP_SECRET`   | 飞书/Lark 应用密钥                  |
 | `FEISHU_DOMAIN`       | `feishu` 或 `lark`，默认 `feishu` |
 | `FEISHU_GROUP_POLICY` | `open` 或 `mention`，默认 `open`  |
+| `FEISHU_GROUP_KEYWORDS` | 群聊关键词，逗号或分号分隔；命中后无需 @ |
+| `FEISHU_GROUP_ALSO_ON_REPLY` | `1` 时回复机器人消息可继续追问，无需再次 @ |
+| `FEISHU_IGNORE_BOT_MESSAGES` | 是否忽略其他机器人消息，默认 `true` |
 | `FEISHU_LANGUAGE`     | `zh` 或 `en`                   |
-| `FEISHU_REACT_EMOJI`  | 收到消息时的表情回应，默认 `THUMBSUP`      |
+| `FEISHU_REACT_EMOJI`  | 收到消息时的表情回应，默认 `Get`      |
 | `FEISHU_AUTO_START`   | `1` 或 `0`                     |
 | `FEISHU_CARD_ACTION_MODE` | `webhook` 或 `ws`，默认 `webhook` |
 | `FEISHU_CARD_ACTION_WEBHOOK_HOST` | 卡片回调监听地址，默认 `0.0.0.0` |
@@ -241,6 +252,13 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `FEISHU_CARD_ACTION_WEBHOOK_PATH` | 卡片回调路径，默认 `/webhook/card` |
 | `FEISHU_PROMPT_NOTIFY_SEC` | 长任务超过多少秒后在飞书发一条“仍在处理中”提示，默认 `180`，`0` 关闭 |
 | `FEISHU_PROMPT_TIMEOUT_SEC` | 任务硬超时秒数，超时后中止任务并报失败，默认 `0`（不设硬超时，长期运行也不会被报失败） |
+| `FEISHU_PARSE_INTERACTIVE_CARDS` | 是否把 interactive 卡片转为 Pi 可读文字，默认 `true` |
+| `FEISHU_INCLUDE_QUOTED_MESSAGE` | 回复/引用消息时是否带入原消息内容，默认 `true` |
+| `FEISHU_QUOTED_MESSAGE_MAX_CHARS` | 引用消息最多带入的字符数，默认 `8000` |
+| `FEISHU_SEND_MAX_RETRIES` | 飞书接口临时失败时的重试次数，默认 `2` |
+| `FEISHU_STREAMING_REPLY` | 是否启用 CardKit 单卡流式回复，默认 `true` |
+| `FEISHU_STREAM_PRINT_FREQUENCY_MS` | 流式逐字显示的刷新间隔，默认 `50` |
+| `FEISHU_STREAM_PRINT_STEP` | 每次显示的字符数，默认 `1` |
 | `FEISHU_EXT_DEV`      | `1` 时显示本地开发标识 `DEV`           |
 
 ### config.json 字段
@@ -252,7 +270,22 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `promptNotifySec`     | 长任务超过多少秒后在飞书发一条“仍在处理中”提示，默认 `180`，`0` 关闭 |
 | `promptTimeoutSec`    | 任务硬超时秒数，超时后中止任务并报失败，默认 `0`（不设硬超时，长期运行也不会被报失败） |
 
-> 注意：长时间任务（例如跑测试、构建、批量处理）默认**不会**再被报为“任务失败”——到达 `promptNotifySec` 后只会在飞书里提示“任务仍在处理中”，任务卡片保持“进行中”，完成后正常送达结果。只有显式设置 `promptTimeoutSec` 后才会硬超时。修改后请执行 `/feishu restart` 生效。
+> 注意：长时间任务（例如跑测试、构建、批量处理）默认**不会**再被报为“任务失败”——到达 `promptNotifySec` 后只会在飞书里提示“任务仍在处理中”，回复卡片保持“回复中”，完成后正常送达结果。只有显式设置 `promptTimeoutSec` 后才会硬超时。修改后请执行 `/feishu restart` 生效。
+
+### 运行时配置
+
+以下桥接设置可以在**与机器人的私聊**里用 `/config` 立即修改，无需重启，并保存到 `~/.pi/agent/feishu/runtime-overrides.json`：
+
+```text
+/config
+/config groupKeywords 报警,告警
+/config groupAlsoOnReply true
+/config streamingReply false
+/config clear groupKeywords
+/config clear all
+```
+
+可热更新的范围仅包括群聊触发、表情、语言和流式展示参数；应用凭证与连接方式不能通过聊天修改。
 
 ***
 
@@ -261,6 +294,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | 路径                               | 内容                |
 | -------------------------------- | ----------------- |
 | `~/.pi/agent/feishu/config.json` | 机器人凭证和基础配置        |
+| `~/.pi/agent/feishu/runtime-overrides.json` | 通过私聊 `/config` 保存的运行时配置覆盖 |
 | `~/.pi/agent/feishu/state.json`  | 飞书会话和 Pi 会话的映射    |
 | `~/.pi/agent/feishu/bridge.json` | 从飞书发起的 Pi 任务路由信息  |
 | `~/.pi/agent/feishu/debug.log`   | 调试日志              |

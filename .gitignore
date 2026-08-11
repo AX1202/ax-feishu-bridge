@@ -22,4 +22,8 @@ pnpm-debug.log*
 # editor
 .vscode/
 .idea/
+
+# local CodeGraph index
+/.codegraph/
+
 AGENTS.md
