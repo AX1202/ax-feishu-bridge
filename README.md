@@ -20,9 +20,6 @@ Pi Agent飞书交流反馈群：<https://applink.feishu.cn/client/chat/chatter/a
 
 B站：<https://space.bilibili.com/4489397>
 
-小红书号：269094344
-
-抖音号：191531443
 
 ## 主要能力
 
