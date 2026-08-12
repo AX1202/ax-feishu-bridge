@@ -18,6 +18,8 @@ export type ResumeSessionItem = {
 
 export type ResumeSessionPage = {
   key: string;
+  /** 当前飞书会话绑定的工作区；无论浏览哪个范围都用于说明筛选上下文。 */
+  workspacePath: string;
   scope: ResumeScope;
   page: number;
   total: number;
@@ -121,12 +123,11 @@ export function buildThinkingCard(key: string, currentModel: any, status: Thinki
 }
 
 export function buildResumeCard(data: ResumeSessionPage) {
-  const scopeLabel = data.scope === "current" ? "当前项目" : "全部会话";
   const elements: any[] = [
     {
       tag: "markdown",
       content: [
-        `当前视图：**${scopeLabel}**`,
+        `当前工作区：**${escapeMarkdown(data.workspacePath)}**`,
         data.total
           ? `第 **${data.page + 1} / ${data.totalPages}** 页，共 **${data.total}** 条历史会话。`
           : "还没有可切换的历史会话。",
@@ -260,7 +261,7 @@ function buildResumeScopeButton(key: string, scope: ResumeScope, active: boolean
     tag: "button",
     text: {
       tag: "plain_text",
-      content: scope === "current" ? "当前项目" : "全部会话",
+      content: scope === "current" ? "当前工作区" : "全部会话",
     },
     type: active ? "primary" : "default",
     value: {

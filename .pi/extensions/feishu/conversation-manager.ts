@@ -268,6 +268,7 @@ export class ConversationManager {
 
     return {
       key,
+      workspacePath: this.getWorkspace(key),
       scope,
       page: clampedPage,
       total,

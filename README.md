@@ -1,6 +1,6 @@
 # pi-feishu-lark
 
-目前功能最强，最易用的 Pi 连接 飞书/Lark 的扩展包！！
+把 Pi 接入飞书/Lark 的消息桥接扩展：在熟悉的聊天界面里与本机 Pi 持续协作。
 
 <p align="center">
   <a href="#zh">中文</a> · <a href="#en">English</a>
@@ -30,18 +30,42 @@ B站：<https://space.bilibili.com/4489397>
 - 支持私聊、群聊、群话题分别维护独立的 Pi 会话
 - 支持群聊策略：
   - `open`：群里和话题里可直接回复，不需要 @，还需手动在飞书开发者后台开启机器人“**获取群组中所有消息”的权限**
-  - `mention`：只有 `@` 机器人时才回复
-- 支持图片、代码文件、文本文件等附件发送
-- 支持解析飞书 interactive 告警卡片；回复告警卡片时会一并带入原卡片内容
+  - `mention`：只有 `@` 机器人、命中关键词或回复机器人消息时才会回复（后两项可选开启）
+- 支持图片、代码文件和文本文件等附件输入；图片识别取决于当前模型是否支持图片
+- 支持解析飞书 interactive 告警卡片；回复一条消息或卡片时，可把原内容一并带给 Pi
 - 支持群聊关键词触发、回复机器人消息继续追问
-- 支持飞书内切换对话模型和思考强度
-- 回复过程使用同一张卡片展示，可逐字流式输出、停止、完成或失败
+- 支持在飞书内切换当前会话的模型、工作区、历史会话和思考强度
+- 收到消息后立即显示“正在回复…”，后续答案在同一张卡片中流式输出；可停止，并会显示完成或失败状态
 - 支持渲染显示 Markdown 格式内容
 - Pi agent 关闭后，仍有后台常驻服务可以对话，pi agent无需前台运行。
 
 <br />
 
 ***
+
+## 新版功能说明（相对旧版）
+
+### 更明确的回复状态
+
+你发送消息后，机器人会立即发出一张标题为“回复中”的卡片，正文显示“正在回复…”。当 Pi 开始输出后，正文会在**同一张卡片**里流式更新；完成、失败或停止时，这张卡片会变为最终状态。
+
+这里展示的是通用的回复状态，不会把模型的思考内容、工具调用过程或调试日志发到飞书。
+
+### 在飞书中切换思考强度
+
+发送 `/thinking` 会打开思考强度选择卡片。卡片只显示 Pi 当前模型实际返回的可用档位，点选即可切换当前飞书会话的思考强度；如果当前 Pi 或模型不支持读取该信息，卡片会如实说明，不会猜测可用选项。
+
+### 回复消息时自动带入上下文
+
+在飞书里对一条普通消息、富文本或告警卡片点“回复”，再发送你的问题，例如“帮我分析一下原因”。机器人会把被回复的原消息和你的补充一起交给 Pi，适合处理告警、需求讨论和报错信息。
+
+默认最多带入 8,000 个字符，可在配置中通过 `includeQuotedMessage` 和 `quotedMessageMaxChars` 调整。
+
+### 新增的飞书侧协作能力
+
+- 可解析 interactive 卡片的文字内容，让 Pi 能理解告警机器人等应用发来的卡片。
+- 群聊可设置关键词触发，也可选择允许回复机器人消息后继续追问。
+- 在与机器人的私聊中，可用 `/config` 即时调整群触发与流式展示等白名单配置，无需重启。
 
 ## 快速开始
 
@@ -195,9 +219,9 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | 命令       | 作用                   |
 | -------- | -------------------- |
 | `/new`   | 为当前会话新建一个 Pi 会话      |
-| `/resume` | 打开历史会话列表，切回以前的 Pi 会话 |
+| `/resume` | 打开当前工作区的历史会话列表；可在卡片中切到全部会话 |
 | `/model` | 打开模型选择卡片，切换当前会话使用的模型 |
-| `/thinking` | 打开思考强度选择卡片；原样显示 Pi 当前模型返回的档位 |
+| `/thinking` | 打开思考强度选择卡片，切换当前模型实际支持的档位 |
 | `/stop`  | 停止当前这条回复的处理          |
 | `/workspace` | 查看当前会话绑定的工作区      |
 | `/workspace /path/to/project` | 把当前会话切换到指定工作区，下一条消息生效 |
@@ -205,6 +229,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `/commands` | 查看机器人支持的全部命令 |
 | `/config` | 查看运行时配置（仅限与机器人的私聊） |
 | `/config groupKeywords 关键词1,关键词2` | 设置群聊关键词触发并立即生效 |
+| `/config streamingReply false` | 关闭流式展示，改用普通回复卡片 |
 | `/config clear groupKeywords` | 清除某项运行时配置覆盖 |
 
 ***
@@ -259,6 +284,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `FEISHU_STREAMING_REPLY` | 是否启用 CardKit 单卡流式回复，默认 `true` |
 | `FEISHU_STREAM_PRINT_FREQUENCY_MS` | 流式逐字显示的刷新间隔，默认 `50` |
 | `FEISHU_STREAM_PRINT_STEP` | 每次显示的字符数，默认 `1` |
+| `FEISHU_STREAM_PUSH_INTERVAL_MS` | 向飞书推送最新正文的间隔，默认 `120` 毫秒 |
 | `FEISHU_EXT_DEV`      | `1` 时显示本地开发标识 `DEV`           |
 
 ### config.json 字段
@@ -285,7 +311,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 /config clear all
 ```
 
-可热更新的范围仅包括群聊触发、表情、语言和流式展示参数；应用凭证与连接方式不能通过聊天修改。
+可热更新的范围仅包括 `groupPolicy`、`groupKeywords`、`groupAlsoOnReply`、`ignoreBotMessages`、`reactEmoji`、`language` 以及流式展示参数；应用凭证、引用消息展开和连接方式不能通过聊天修改。
 
 ***
 
@@ -306,6 +332,8 @@ Windows PATH 加入 C:\Program Files\Git\bin
 ## 常见说明
 
 - 图片能不能被识别，取决于当前选中的模型是否支持图片输入。
+- 图片、文本/代码文件输入是已有能力；interactive 卡片解析和回复消息上下文展开是新版补充的能力。
+- 对一条消息或卡片点“回复”后，Pi 会看到原消息内容和你的新问题；这不是把原消息再次发送到群里。
 - `/feishu reset` 只会清掉配置和映射，不会删除会话历史。
 - 从 TUI、CLI 或其他渠道创建的任务，不会主动发到飞书。
 - `/workspace` 当前只支持绝对路径，或 `~/` 开头的路径。
@@ -342,11 +370,19 @@ Pi-feishu-lark is a bridge between Pi and Feishu/Lark for chat-based workflows.
 
 - Create a Feishu/Lark bot quickly with QR-code setup
 - Keep separate Pi sessions for DMs, group chats, and group topics
-- Support attachments such as images, code files, and text files
-- Switch models inside Feishu/Lark
-- Show live Pi task status
+- Support images and text/code file inputs; image understanding depends on the selected model
+- Parse interactive cards and expand the message you reply to as Pi context
+- Switch models and available thinking levels inside Feishu/Lark
+- Show an immediate “Replying…” card, then stream the answer on that same card
 - Render Markdown replies
 - Keep Pi running in the background after the agent UI is closed
+
+### What's New
+
+- A reply card appears as soon as the bot receives your message, so a slow answer is visibly in progress.
+- `/thinking` opens a picker containing only the thinking levels reported by the current Pi session.
+- Reply to a message or an alert card and Pi receives both the original content and your follow-up.
+- Configure group triggers and streaming behavior in a private chat with `/config`.
 
 ### Quick Start
 
@@ -377,6 +413,10 @@ pi install npm:pi-feishu-lark
 | `/new`   | Start a new Pi session for the current chat |
 | `/resume` | Open past sessions and switch back to one |
 | `/model` | Open the model picker                       |
+| `/thinking` | Open the thinking-level picker for the current session |
+| `/workspace [path]` | View or switch the current workspace |
+| `/status` | View reply status, model, thinking level, and context usage |
+| `/config` | View or update allowed runtime settings in a direct message |
 | `/stop`  | Stop the current reply generation           |
 
 ### Config
