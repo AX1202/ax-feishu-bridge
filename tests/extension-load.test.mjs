@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
@@ -13,8 +13,9 @@ const extensionPath = join(repoRoot, ".pi/extensions/feishu/index.ts");
 const modelRuntimeExtensionPath = join(repoRoot, "tests/fixtures/model-runtime-extension.ts");
 const settleExtensionPath = join(repoRoot, "tests/fixtures/settle-extension.ts");
 
-function runFeishuCommand(command, extraExtensions = []) {
+function runFeishuCommand(command, extraExtensions = [], setup) {
   const homeDir = mkdtempSync(join(tmpdir(), "pi-feishu-lark-test-"));
+  const agentDir = join(homeDir, ".pi", "agent");
   const isolatedEnv = { ...process.env };
   for (const key of Object.keys(isolatedEnv)) {
     if (key.startsWith("FEISHU_") || key.startsWith("LARK_") || key.startsWith("PI_FEISHU_")) {
@@ -23,6 +24,7 @@ function runFeishuCommand(command, extraExtensions = []) {
   }
 
   try {
+    setup?.({ homeDir, agentDir });
     const extraExtensionArgs = extraExtensions.flatMap((path) => ["-e", path]);
     return spawnSync(process.execPath, [
       piCli,
@@ -46,7 +48,7 @@ function runFeishuCommand(command, extraExtensions = []) {
         ...isolatedEnv,
         HOME: homeDir,
         USERPROFILE: homeDir,
-        PI_CODING_AGENT_DIR: join(homeDir, ".pi", "agent"),
+        PI_CODING_AGENT_DIR: agentDir,
         PI_OFFLINE: "1",
       },
       encoding: "utf8",
@@ -55,6 +57,24 @@ function runFeishuCommand(command, extraExtensions = []) {
   } finally {
     rmSync(homeDir, { recursive: true, force: true });
   }
+}
+
+function configureFixtureModelRuntime({ agentDir }) {
+  mkdirSync(agentDir, { recursive: true });
+  writeFileSync(join(agentDir, "models.json"), `${JSON.stringify({
+    providers: {
+      "fixture-provider": {
+        baseUrl: "https://example.invalid/v1",
+        api: "openai-completions",
+        apiKey: "fixture-api-key",
+        models: [{ id: "fallback-model" }, { id: "target-model" }],
+      },
+    },
+  }, null, 2)}\n`);
+  writeFileSync(join(agentDir, "settings.json"), `${JSON.stringify({
+    defaultProvider: "fixture-provider",
+    defaultModel: "target-model",
+  }, null, 2)}\n`);
 }
 
 function outputOf(result) {
@@ -74,6 +94,10 @@ test("does not start the daemon before Feishu is configured", () => {
 });
 
 test("initializes the current Pi model runtime", () => {
-  const result = runFeishuCommand("/verify-feishu-model-runtime", [modelRuntimeExtensionPath]);
+  const result = runFeishuCommand(
+    "/verify-feishu-model-runtime",
+    [modelRuntimeExtensionPath],
+    configureFixtureModelRuntime,
+  );
   assert.equal(result.status, 0, outputOf(result) || `Pi exited via ${result.signal || "unknown signal"}`);
 });

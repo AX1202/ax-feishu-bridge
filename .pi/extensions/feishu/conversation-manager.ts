@@ -326,7 +326,7 @@ export class ConversationManager {
     const next = previous.then(async () => {
       const modelRuntime = await this.getModelRuntime();
       const model = modelRuntime.getModel(provider, modelId);
-      if (!model || !modelRuntime.hasConfiguredAuth(model.provider)) {
+      if (!model || !modelRuntime.hasConfiguredAuth(model)) {
         await onReply(`这个模型当前不可用：${provider}/${modelId}。请发送 /model 重新选择。`);
         return;
       }
@@ -429,7 +429,7 @@ export class ConversationManager {
     const selected = this.state.models?.[key];
     if (selected) {
       const model = modelRuntime.getModel(selected.provider, selected.id);
-      if (model && modelRuntime.hasConfiguredAuth(model.provider)) return model;
+      if (model && modelRuntime.hasConfiguredAuth(model)) return model;
     }
     const cached = this.sessions.get(key);
     if (cached) {
@@ -438,7 +438,7 @@ export class ConversationManager {
     // Check settings default model before falling back to first available
     if (this.defaultProvider && this.defaultModelId) {
       const defaultModel = modelRuntime.getModel(this.defaultProvider, this.defaultModelId);
-      if (defaultModel && modelRuntime.hasConfiguredAuth(defaultModel.provider)) {
+      if (defaultModel && modelRuntime.hasConfiguredAuth(defaultModel)) {
         return defaultModel;
       }
     }
