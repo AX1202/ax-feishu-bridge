@@ -311,12 +311,29 @@ export default function feishuExtension(pi: ExtensionAPI) {
       reapDetachedDaemonProcesses({ keepPids: [process.pid] });
       ensureRoot();
       const logFd = openSync(DAEMON_LOG_PATH, "a");
-      const child = spawn("bash", ["-lc", daemonCommand()], {
-        detached: true,
-        cwd: process.cwd(),
-        env: { ...process.env, PI_FEISHU_DAEMON: "1" },
-        stdio: ["ignore", logFd, logFd],
-      });
+      const { args: daemonArgs } = daemonSpec();
+      let child: ReturnType<typeof spawn>;
+      if (process.platform === "win32") {
+        const npmPrefix = process.env.APPDATA
+          ? `${process.env.APPDATA}\\npm`
+          : `${process.env.USERPROFILE}\\AppData\\Roaming\\npm`;
+        const piCliEntry = process.env.PI_CLI_ENTRY
+          || `${npmPrefix}\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js`;
+        child = spawn("node", [piCliEntry, ...daemonArgs], {
+          detached: true,
+          cwd: process.cwd(),
+          env: { ...process.env, PI_FEISHU_DAEMON: "1" },
+          stdio: ["pipe", logFd, logFd],
+        });
+        if (child.stdin) { child.stdin.resume(); }
+      } else {
+        child = spawn("bash", ["-lc", daemonCommand()], {
+          detached: true,
+          cwd: process.cwd(),
+          env: { ...process.env, PI_FEISHU_DAEMON: "1" },
+          stdio: ["ignore", logFd, logFd],
+        });
+      }
       child.unref();
 
       await sleep(1500);
