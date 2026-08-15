@@ -25,6 +25,22 @@ import {
 import { BotUnavailableError, FeishuTransport } from "./transport.js";
 import type { FeishuConfig, FeishuStatus } from "./types.js";
 
+// Names of the feishu_config_* tools. Listed so they can be hidden from the
+// system prompt by default and toggled via the `/feishu tools on|off` subcommand.
+const FEISHU_CONFIG_TOOLS = [
+  "feishu_config_get",
+  "feishu_config_set",
+  "feishu_config_clear",
+];
+
+function hideFeishuConfigTools(pi: ExtensionAPI) {
+  const active = pi.getActiveTools();
+  const filtered = active.filter((t) => !FEISHU_CONFIG_TOOLS.includes(t));
+  if (filtered.length !== active.length) {
+    pi.setActiveTools(filtered);
+  }
+}
+
 export default function feishuExtension(pi: ExtensionAPI) {
   if (process.env[CHILD_SESSION_ENV] === "1") {
     return;
@@ -32,6 +48,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
 
   // 模型可读写白名单配置（热更新 + 落盘）
   registerFeishuConfigTools(pi);
+
+  // Hide config tools by default; user can toggle with /feishu-config-tools.
+  hideFeishuConfigTools(pi);
 
   let transport: FeishuTransport | undefined;
   let gatewayLock: GatewayLockHandle | undefined;
@@ -353,11 +372,12 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: setup, start, stop, restart, status, debug, autostart, reset",
+    description: "Feishu/Lark: setup, start, stop, restart, status, debug, autostart, reset, tools on|off",
     handler: async (args, ctx) => {
       uiRef = ctx.ui as any;
-      const [cmdRaw] = args.trim().toLowerCase().split(/\s+/, 1);
-      const cmd = cmdRaw || "status";
+      const tokens = args.trim().toLowerCase().split(/\s+/, 2);
+      const cmd = tokens[0] || "status";
+      const cmdArg = tokens[1] || "";
       try {
         if (cmd === "setup") {
           const configToStart = await runSetup(ctx);
@@ -462,7 +482,34 @@ export default function feishuExtension(pi: ExtensionAPI) {
           refreshStatusFromState();
           return;
         }
-        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | status | debug | autostart | reset", "info");
+        if (cmd === "tools") {
+          const active = pi.getActiveTools();
+          const enabled = FEISHU_CONFIG_TOOLS.every((t) => active.includes(t));
+          if (cmdArg === "on") {
+            if (enabled) {
+              ctx.ui.notify("Feishu config tools already enabled / 已启用", "info");
+              return;
+            }
+            pi.setActiveTools([...active, ...FEISHU_CONFIG_TOOLS]);
+            ctx.ui.notify("Feishu config tools: enabled / 已启用", "info");
+            return;
+          }
+          if (cmdArg === "off") {
+            if (!enabled) {
+              ctx.ui.notify("Feishu config tools already disabled / 已隐藏", "info");
+              return;
+            }
+            hideFeishuConfigTools(pi);
+            ctx.ui.notify("Feishu config tools: disabled / 已隐藏", "info");
+            return;
+          }
+          ctx.ui.notify(
+            `Feishu config tools: ${enabled ? "enabled / 已启用" : "disabled / 已隐藏"} — use \`/feishu tools on|off\` to toggle`,
+            "info",
+          );
+          return;
+        }
+        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | status | debug | autostart | reset | tools on|off", "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -474,6 +521,8 @@ export default function feishuExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     uiRef = ctx.ui as any;
     startStatusRefresh();
+    // Re-hide config tools on every new session; user can opt back in.
+    hideFeishuConfigTools(pi);
   });
 
   if (bootConfig?.autoStart) {
