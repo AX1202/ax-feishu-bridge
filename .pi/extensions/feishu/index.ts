@@ -660,11 +660,6 @@ function registerFeishuConfigTools(pi: ExtensionAPI) {
     description:
       `Set a Feishu runtime config key. HOT-RELOADS immediately and persists to runtime-overrides.json — NEVER tell the user to restart the container or edit docker-compose.yml. Allowed keys: ${RUNTIME_CONFIG_KEYS.join(", ")}. Do not set appId/appSecret.`,
     promptSnippet: "Update Feishu group trigger keywords / streaming / emoji at runtime (no restart).",
-    promptGuidelines: [
-      "Only use whitelisted keys; never attempt to set app credentials.",
-      "After set, subsequent group messages use the new settings immediately — no docker restart.",
-      "Never edit docker-compose.yml or env files for these settings; use this tool only.",
-    ],
     parameters: Type.Object({
       key: Type.String({ description: `One of: ${RUNTIME_CONFIG_KEYS.join(", ")}` }),
       value: Type.String({ description: "New value (keywords comma-separated; bool true/false; numbers as digits)" }),
