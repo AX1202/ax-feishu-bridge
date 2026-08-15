@@ -49,8 +49,11 @@ export default function feishuExtension(pi: ExtensionAPI) {
   // 模型可读写白名单配置（热更新 + 落盘）
   registerFeishuConfigTools(pi);
 
-  // Hide config tools by default; user can toggle with /feishu-config-tools.
-  hideFeishuConfigTools(pi);
+  // Note: don't call hideFeishuConfigTools(pi) here. pi.getActiveTools() /
+  // pi.setActiveTools() are session-scoped APIs; calling them at extension
+  // load time (before session_start fires) causes the extension to throw,
+  // which prevents everything downstream — including the /feishu command
+  // registration — from running. Hiding is handled in session_start below.
 
   let transport: FeishuTransport | undefined;
   let gatewayLock: GatewayLockHandle | undefined;
