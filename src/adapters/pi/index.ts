@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
@@ -40,6 +41,10 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
 
   // 模型可读写白名单配置（热更新 + 落盘）
   registerFeishuConfigTools(pi);
+
+  // 注意：不要在这里调用 hideFeishuConfigTools(pi)。getActiveTools()/setActiveTools()
+  // 是会话级 API，在扩展加载期（session_start 之前）调用会抛错，导致后续
+  // /feishu 命令注册等逻辑全部不执行。隐藏逻辑统一放在 session_start 里。
 
   let transport: FeishuTransport | undefined;
   let gatewayLock: GatewayLockHandle | undefined;
@@ -252,12 +257,34 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
       reapDetachedDaemonProcesses({ keepPids: [process.pid] });
       ensureRoot();
       const logFd = openSync(DAEMON_LOG_PATH, "a");
-      const child = spawn("bash", ["-lc", daemonCommand()], {
-        detached: true,
-        cwd: process.cwd(),
-        env: { ...process.env, PI_FEISHU_DAEMON: "1" },
-        stdio: ["ignore", logFd, logFd],
-      });
+      let child: ChildProcess;
+      if (process.platform === "win32") {
+        // Windows 上 spawn("bash", ...) 可能解析到 WSL 的 bash.exe（而非 Git Bash），
+        // 导致 daemon 在 WSL 环境里启动、路径和凭据全部错乱后立即退出。
+        // 因此 Windows 直接用 node 拉起 Pi CLI 入口，绕开 bash 管道。
+        const npmPrefix = process.env.APPDATA
+          ? `${process.env.APPDATA}\\npm`
+          : `${process.env.USERPROFILE}\\AppData\\Roaming\\npm`;
+        const piCliEntry = process.env.PI_CLI_ENTRY
+          || `${npmPrefix}\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js`;
+        const { args } = daemonSpec();
+        child = spawn("node", [piCliEntry, ...args], {
+          detached: true,
+          cwd: process.cwd(),
+          env: { ...process.env, PI_FEISHU_DAEMON: "1" },
+          stdio: ["pipe", logFd, logFd],
+        });
+        // 保持 stdin 打开，等价于 Linux 侧 `tail -f /dev/null |` 的作用，
+        // 否则 pi --mode rpc 会在 stdin EOF 后退出。
+        if (child.stdin) (child.stdin as unknown as Readable).resume();
+      } else {
+        child = spawn("bash", ["-lc", daemonCommand()], {
+          detached: true,
+          cwd: process.cwd(),
+          env: { ...process.env, PI_FEISHU_DAEMON: "1" },
+          stdio: ["ignore", logFd, logFd],
+        });
+      }
       child.unref();
 
       await sleep(1500);
@@ -294,11 +321,12 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
   }
 
   pi.registerCommand("feishu", {
-    description: "Feishu/Lark: setup, start, stop, restart, status, debug, autostart, reset",
+    description: "Feishu/Lark: setup, start, stop, restart, status, debug, autostart, reset, tools on|off",
     handler: async (args, ctx) => {
       uiRef = ctx.ui as any;
-      const [cmdRaw] = args.trim().toLowerCase().split(/\s+/, 1);
-      const cmd = cmdRaw || "status";
+      const tokens = args.trim().toLowerCase().split(/\s+/, 2);
+      const cmd = tokens[0] || "status";
+      const cmdArg = tokens[1] || "";
       try {
         if (cmd === "setup") {
           const configToStart = await runSetup(ctx);
@@ -403,7 +431,34 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
           refreshStatusFromState();
           return;
         }
-        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | status | debug | autostart | reset", "info");
+        if (cmd === "tools") {
+          const active = pi.getActiveTools();
+          const enabled = FEISHU_CONFIG_TOOLS.every((t) => active.includes(t));
+          if (cmdArg === "on") {
+            if (enabled) {
+              ctx.ui.notify("飞书配置工具已启用。", "info");
+              return;
+            }
+            pi.setActiveTools([...active, ...FEISHU_CONFIG_TOOLS]);
+            ctx.ui.notify("飞书配置工具已启用（仅当前会话生效）。", "info");
+            return;
+          }
+          if (cmdArg === "off") {
+            if (!enabled) {
+              ctx.ui.notify("飞书配置工具已隐藏。", "info");
+              return;
+            }
+            hideFeishuConfigTools(pi);
+            ctx.ui.notify("飞书配置工具已隐藏。", "info");
+            return;
+          }
+          ctx.ui.notify(
+            `飞书配置工具当前：${enabled ? "已启用" : "已隐藏"}。用 /feishu tools on|off 切换。`,
+            "info",
+          );
+          return;
+        }
+        ctx.ui.notify("可用命令：/feishu setup | start | stop | restart | status | debug | autostart | reset | tools on|off", "info");
       } catch (error) {
         ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
@@ -415,6 +470,8 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
   pi.on("session_start", async (_event, ctx) => {
     uiRef = ctx.ui as any;
     startStatusRefresh();
+    // 每个新会话默认隐藏配置工具，保持提示词干净；用户可用 /feishu tools on 打开。
+    hideFeishuConfigTools(pi);
   });
 
   if (bootConfig?.autoStart) {
@@ -568,6 +625,21 @@ function textToolResult(text: string) {
     content: [{ type: "text" as const, text }],
     details: {},
   };
+}
+
+// feishu_config_* 工具名单：默认从提示词隐藏，可用 /feishu tools on|off 切换。
+const FEISHU_CONFIG_TOOLS = [
+  "feishu_config_get",
+  "feishu_config_set",
+  "feishu_config_clear",
+];
+
+function hideFeishuConfigTools(pi: ExtensionAPI) {
+  const active = pi.getActiveTools();
+  const filtered = active.filter((t) => !FEISHU_CONFIG_TOOLS.includes(t));
+  if (filtered.length !== active.length) {
+    pi.setActiveTools(filtered);
+  }
 }
 
 function registerFeishuConfigTools(pi: ExtensionAPI) {
