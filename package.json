@@ -1,6 +1,6 @@
 {
   "name": "ax-feishu-bridge",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Feishu/Lark bridge for coding agents — chat with Pi or DeepSeek Harness from Feishu or Lark",
   "type": "module",
   "license": "MIT",
