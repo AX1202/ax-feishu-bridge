@@ -1,6 +1,6 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import qrcode from "qrcode-terminal";
-import { CONFIG_PATH, DEFAULT_CONFIG, ensureRoot, mask, writeJson } from "../../feishu/config.ts";
+import { CONFIG_PI_PATH, DEFAULT_CONFIG, ensureRoot, mask, writeJson } from "../../feishu/config.ts";
+import { registerFeishuApp } from "../../feishu/app-register.ts";
 import type { Domain, FeishuConfig, GroupPolicy } from "../../feishu/types.ts";
 
 export async function uiSelect<T extends string>(ctx: ExtensionCommandContext, title: string, options: Array<{ value: T; label: string }>, initialValue?: T): Promise<T> {
@@ -47,7 +47,9 @@ export async function runSetup(ctx: ExtensionCommandContext) {
   let domain: Domain = "feishu";
 
   if (mode === "auto") {
-    const created = await registerFeishuApp(ctx);
+    const created = await registerFeishuApp({
+      onNotify: (text) => ctx.ui.notify(text, "info"),
+    });
     appId = created.appId;
     appSecret = created.appSecret;
     domain = created.domain;
@@ -82,10 +84,10 @@ export async function runSetup(ctx: ExtensionCommandContext) {
     reactEmoji: DEFAULT_CONFIG.reactEmoji,
     autoStart: true,
   };
-  writeJson(CONFIG_PATH, config);
+  writeJson(CONFIG_PI_PATH, config);
 
   ctx.ui.notify(
-    `飞书配置已保存 / Feishu config saved\nPath: ${CONFIG_PATH}\nApp ID: ${mask(appId)}\n群聊策略 / Group policy: ${groupPolicy}`,
+    `飞书配置已保存 / Feishu config saved\nPath: ${CONFIG_PI_PATH}\nApp ID: ${mask(appId)}\n群聊策略 / Group policy: ${groupPolicy}`,
     "info",
   );
 
@@ -93,37 +95,4 @@ export async function runSetup(ctx: ExtensionCommandContext) {
     return config;
   }
   return undefined;
-}
-
-async function registerFeishuApp(ctx: ExtensionCommandContext): Promise<{ appId: string; appSecret: string; domain: Domain }> {
-  const lark = await import("@larksuiteoapi/node-sdk");
-  ctx.ui.notify("正在准备飞书授权二维码... / Preparing Feishu authorization QR code...", "info");
-
-  const result = await lark.registerApp({
-    source: "pi-feishu-extension",
-    onQRCodeReady(info: { url: string; expireIn: number }) {
-      qrcode.generate(info.url, { small: true }, (qr) => {
-        console.log("\n飞书/Lark 授权二维码 / Feishu/Lark authorization QR code");
-        console.log(qr);
-        console.log(info.url);
-        console.log(`二维码 ${info.expireIn} 秒后过期 / QR code expires in ${info.expireIn} seconds.`);
-      });
-      ctx.ui.notify(
-        "请在终端扫描二维码，或打开终端中显示的链接。 / Scan the QR code in terminal, or open the link printed there.",
-        "info",
-      );
-    },
-    onStatusChange(info: any) {
-      if (info?.status === "domain_switched") {
-        ctx.ui.notify("检测到 Lark 租户，正在切换区域。 / Detected Lark tenant; switching domain.", "info");
-      }
-    },
-  });
-
-  const domain: Domain = result?.user_info?.tenant_brand === "lark" ? "lark" : "feishu";
-  return {
-    appId: result.client_id,
-    appSecret: result.client_secret,
-    domain,
-  };
 }

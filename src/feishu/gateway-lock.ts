@@ -3,15 +3,24 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { debugLog } from "./debug.ts";
 
-const LOCK_KEY = "pi-feishu-lark.feishu-gateway";
+/** 兼容旧版锁（未按 appId 区分时的固定 key）。 */
+const LEGACY_LOCK_KEY = "pi-feishu-lark.feishu-gateway";
 const LOCKS_PATH = join(homedir(), ".pi", "agent", "locks.json");
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 25;
 const LOCK_ATTEMPTS = 40;
 const HEARTBEAT_MS = 5_000;
 
+/**
+ * 锁按机器人凭证（appId）区分：不同机器人各拿各的钥匙，可并行；
+ * 同一机器人（误配）仍互斥，避免抢同一个飞书连接。
+ */
+function lockKeyFor(appId: string | undefined) {
+  return appId ? `pi-feishu-lark.gateway.${appId}` : LEGACY_LOCK_KEY;
+}
+
 export type GatewayOwner = {
-  key: typeof LOCK_KEY;
+  key: string;
   pid: number;
   token: string;
   cwd: string;
@@ -53,7 +62,7 @@ export class GatewayLockHandle {
     let lostOwnership = false;
     await withLocksFileLock(() => {
       const locks = readLocksFile();
-      const current = asGatewayOwner(locks[LOCK_KEY]);
+      const current = asGatewayOwner(locks[this.owner.key], this.owner.key);
       if (!current || current.token !== this.owner.token || current.pid !== this.owner.pid) {
         this.stopHeartbeat();
         lostOwnership = true;
@@ -64,7 +73,7 @@ export class GatewayLockHandle {
         heartbeatAt: new Date().toISOString(),
         status,
       };
-      locks[LOCK_KEY] = next;
+      locks[this.owner.key] = next;
       writeLocksFile(locks);
     });
     if (lostOwnership) {
@@ -77,9 +86,9 @@ export class GatewayLockHandle {
     this.stopHeartbeat();
     await withLocksFileLock(() => {
       const locks = readLocksFile();
-      const current = asGatewayOwner(locks[LOCK_KEY]);
+      const current = asGatewayOwner(locks[this.owner.key], this.owner.key);
       if (current?.token === this.owner.token && current.pid === this.owner.pid) {
-        delete locks[LOCK_KEY];
+        delete locks[this.owner.key];
         writeLocksFile(locks);
         debugLog("feishu.gateway.lock_released", { pid: this.owner.pid });
       }
@@ -93,10 +102,11 @@ export class GatewayLockHandle {
   }
 }
 
-export async function acquireGatewayLock(cwd: string, force = false): Promise<GatewayLockResult> {
+export async function acquireGatewayLock(cwd: string, force = false, appId?: string): Promise<GatewayLockResult> {
+  const key = lockKeyFor(appId);
   return withLocksFileLock(() => {
     const locks = readLocksFile();
-    const existing = asGatewayOwner(locks[LOCK_KEY]);
+    const existing = asGatewayOwner(locks[key], key);
     if (existing && !force && !isStale(existing)) {
       debugLog("feishu.gateway.lock_busy", {
         ownerPid: existing.pid,
@@ -107,7 +117,7 @@ export async function acquireGatewayLock(cwd: string, force = false): Promise<Ga
     }
 
     const owner: GatewayOwner = {
-      key: LOCK_KEY,
+      key,
       pid: process.pid,
       token: randomToken(),
       cwd,
@@ -115,7 +125,7 @@ export async function acquireGatewayLock(cwd: string, force = false): Promise<Ga
       heartbeatAt: new Date().toISOString(),
       status: "starting",
     };
-    locks[LOCK_KEY] = owner;
+    locks[key] = owner;
     writeLocksFile(locks);
     debugLog("feishu.gateway.lock_acquired", {
       pid: owner.pid,
@@ -127,8 +137,9 @@ export async function acquireGatewayLock(cwd: string, force = false): Promise<Ga
   });
 }
 
-export function readGatewayOwner(): GatewayOwner | undefined {
-  const owner = asGatewayOwner(readLocksFile()[LOCK_KEY]);
+export function readGatewayOwner(appId?: string): GatewayOwner | undefined {
+  const key = lockKeyFor(appId);
+  const owner = asGatewayOwner(readLocksFile()[key], key);
   return owner && !isStale(owner) ? owner : undefined;
 }
 
@@ -136,10 +147,10 @@ export function gatewayLockPath() {
   return LOCKS_PATH;
 }
 
-function asGatewayOwner(value: unknown): GatewayOwner | undefined {
+function asGatewayOwner(value: unknown, expectedKey: string): GatewayOwner | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Partial<GatewayOwner>;
-  if (raw.key !== LOCK_KEY) return undefined;
+  if (raw.key !== expectedKey) return undefined;
   if (typeof raw.pid !== "number" || typeof raw.token !== "string") return undefined;
   if (typeof raw.cwd !== "string" || typeof raw.startedAt !== "string" || typeof raw.heartbeatAt !== "string") return undefined;
   if (raw.status !== "starting" && raw.status !== "connected" && raw.status !== "disconnected") return undefined;

@@ -10,11 +10,13 @@ import { FeishuBridgeStore } from "../../feishu/bridge-store.ts";
 import { FeishuDelivery } from "../../feishu/delivery.ts";
 import { FeishuMessageHandler } from "../../feishu/message-handler.ts";
 import { acquireGatewayLock, type GatewayLockHandle } from "../../feishu/gateway-lock.ts";
-import { loadConfig } from "../../feishu/config.ts";
+import { HARNESS_SOURCE, loadConfig, setRuntimeSource } from "../../feishu/config.ts";
 import { debugLog } from "../../feishu/debug.ts";
 import { BotUnavailableError, FeishuTransport } from "../../feishu/transport.ts";
 import { createCardActionHandler } from "../../feishu/card-actions.ts";
+import type { FeishuConfig } from "../../feishu/types.ts";
 import { HarnessConversationRuntime } from "./HarnessConversationRuntime.ts";
+import { runHarnessSetup } from "./setup.ts";
 
 /** 插件名（cordis.patch.yml 引用）。 */
 export const name = "feishu-harness";
@@ -23,16 +25,28 @@ export const name = "feishu-harness";
 export const inject = ["agents", "sessions", "sessionQuery", "llm"];
 
 export function apply(ctx: Context) {
-  const cfg = loadConfig();
-  if (!cfg) {
-    console.log("[feishu] 未检测到飞书配置（需要 FEISHU_APP_ID/FEISHU_APP_SECRET 环境变量或 config.json）。Harness 插件不启动。");
-    return;
-  }
-  if (cfg.autoStart === false) {
-    console.log("[feishu] 飞书自动启动已关闭（config.json 中 autoStart=false），不启动连接。");
-    return;
-  }
+  // Harness 使用自己独立的配置/状态/记录文件（config.harness.json 等），与 Pi 互不干扰
+  setRuntimeSource(HARNESS_SOURCE);
+  void (async () => {
+    let cfg = loadConfig();
+    if (!cfg) {
+      // 第一次使用：没有配置时进入终端向导，配置完成直接继续启动
+      console.log("[feishu] 未检测到飞书机器人配置，进入配置向导...");
+      cfg = await runHarnessSetup();
+      if (!cfg) {
+        console.log("[feishu] 配置未完成，Harness 插件不启动。可重新运行本命令再次配置。");
+        return;
+      }
+    }
+    if (cfg.autoStart === false) {
+      console.log("[feishu] 飞书自动启动已关闭（config.json 中 autoStart=false），不启动连接。");
+      return;
+    }
+    startFeishu(ctx, cfg);
+  })();
+}
 
+function startFeishu(ctx: Context, cfg: FeishuConfig) {
   const bridgeStore = new FeishuBridgeStore();
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
@@ -47,8 +61,8 @@ export function apply(ctx: Context) {
 
   ctx.effect(() => {
     void (async () => {
-      // 与 Pi daemon 等进程共用 gateway lock，保证同一时间只有一个飞书连接
-      const lockResult = await acquireGatewayLock(process.cwd(), false);
+      // 与 Pi daemon 等进程共用 gateway lock（按机器人凭证区分），保证同一机器人只有一个连接
+      const lockResult = await acquireGatewayLock(process.cwd(), false, cfg.appId);
       if (lockResult.status === "busy") {
         console.log(`[feishu] 飞书连接已被其他进程占用（pid=${lockResult.owner.pid}），本插件不启动。`);
         return;

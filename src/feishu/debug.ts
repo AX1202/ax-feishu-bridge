@@ -1,33 +1,38 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { DEBUG_LOG_PATH, ensureRoot } from "./config.ts";
+import { ensureRoot, getRuntimeSource } from "./config.ts";
 
 const MAX_VALUE_LENGTH = 1200;
 const MAX_LOG_LINES = 1000;
 const TRIM_TRIGGER_LINES = 1200;
 
+function debugLogPath() {
+  return getRuntimeSource().debugLogPath;
+}
+
 export function debugLog(event: string, details?: Record<string, unknown>) {
   try {
     ensureRoot();
+    const path = debugLogPath();
     const line = JSON.stringify({
       at: new Date().toISOString(),
       event,
       ...(details ? { details: truncate(details) } : {}),
     });
-    appendFileSync(DEBUG_LOG_PATH, `${line}\n`, "utf8");
-    trimDebugLogIfNeeded();
+    appendFileSync(path, `${line}\n`, "utf8");
+    trimDebugLogIfNeeded(path);
   } catch {
     // Debug logging must never break message handling.
   }
 }
 
-function trimDebugLogIfNeeded() {
-  const content = readFileSync(DEBUG_LOG_PATH, "utf8");
+function trimDebugLogIfNeeded(path: string) {
+  const content = readFileSync(path, "utf8");
   const lines = content.split("\n");
   const hasTrailingNewline = lines[lines.length - 1] === "";
   const effectiveLines = hasTrailingNewline ? lines.slice(0, -1) : lines;
   if (effectiveLines.length <= TRIM_TRIGGER_LINES) return;
   const recent = effectiveLines.slice(-MAX_LOG_LINES);
-  writeFileSync(DEBUG_LOG_PATH, `${recent.join("\n")}\n`, "utf8");
+  writeFileSync(path, `${recent.join("\n")}\n`, "utf8");
 }
 
 function truncate(value: unknown): unknown {

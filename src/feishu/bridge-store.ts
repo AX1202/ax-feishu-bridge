@@ -1,7 +1,11 @@
-import { BRIDGE_PATH, readJson, writeJson } from "./config.ts";
+import { getRuntimeSource, readJson, writeJson } from "./config.ts";
 import type { FeishuBridgeState, FeishuJobRoute, FeishuMessage, FeishuRoute } from "./types.ts";
 
 const DEFAULT_STATE: FeishuBridgeState = { version: 1, routes: {}, jobs: {}, sent: {} };
+
+function bridgePath() {
+  return getRuntimeSource().bridgePath;
+}
 
 export class FeishuBridgeStore {
   bindConversation(sessionKey: string, msg: FeishuMessage, sessionId?: string) {
@@ -65,7 +69,7 @@ export class FeishuBridgeStore {
   }
 
   private read(): FeishuBridgeState {
-    const raw = readJson<FeishuBridgeState>(BRIDGE_PATH, DEFAULT_STATE);
+    const raw = readJson<FeishuBridgeState>(bridgePath(), DEFAULT_STATE);
     return {
       version: 1,
       routes: { ...(raw.routes || {}) },
@@ -75,7 +79,7 @@ export class FeishuBridgeStore {
   }
 
   private write(state: FeishuBridgeState) {
-    writeJson(BRIDGE_PATH, state);
+    writeJson(bridgePath(), state);
   }
 }
 

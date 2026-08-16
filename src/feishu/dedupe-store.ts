@@ -1,12 +1,16 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { DEDUPE_PATH, ensureRoot } from "./config.ts";
+import { ensureRoot, getRuntimeSource } from "./config.ts";
 import { debugLog } from "./debug.ts";
 
 const MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 5000;
 const LOCK_RETRY_MS = 25;
 const LOCK_ATTEMPTS = 40;
+
+function dedupePath() {
+  return getRuntimeSource().dedupePath;
+}
 
 type DedupeStatus = "processing" | "replied" | "ignored" | "failed";
 
@@ -85,8 +89,9 @@ export async function markFeishuMessage(messageId: string, status: DedupeStatus,
 
 function readStore(): DedupeStore {
   try {
-    if (!existsSync(DEDUPE_PATH)) return {};
-    return JSON.parse(readFileSync(DEDUPE_PATH, "utf8")) as DedupeStore;
+    const path = dedupePath();
+    if (!existsSync(path)) return {};
+    return JSON.parse(readFileSync(path, "utf8")) as DedupeStore;
   } catch {
     return {};
   }
@@ -94,7 +99,7 @@ function readStore(): DedupeStore {
 
 function writeStore(store: DedupeStore) {
   ensureRoot();
-  writeFileSync(DEDUPE_PATH, `${JSON.stringify(store, null, 2)}\n`, "utf8");
+  writeFileSync(dedupePath(), `${JSON.stringify(store, null, 2)}\n`, "utf8");
 }
 
 function pruneExpired(messages: Record<string, DedupeRecord>, now: number) {
@@ -107,7 +112,7 @@ function pruneExpired(messages: Record<string, DedupeRecord>, now: number) {
 
 async function withStoreLock<T>(fn: () => T | Promise<T>): Promise<T> {
   ensureRoot();
-  const lockPath = `${DEDUPE_PATH}.lock`;
+  const lockPath = `${dedupePath()}.lock`;
 
   for (let attempt = 0; attempt < LOCK_ATTEMPTS; attempt += 1) {
     if (tryAcquireLock(lockPath)) {

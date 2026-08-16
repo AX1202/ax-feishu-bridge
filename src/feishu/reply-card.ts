@@ -11,7 +11,7 @@ import {
   type ReplyCardStatus,
 } from "./card-builder.ts";
 import { CardKitStream } from "./cardkit-stream.ts";
-import { loadConfig } from "./config.ts";
+import { loadConfig, runtimeEnv } from "./config.ts";
 import { debugLog } from "./debug.ts";
 
 export type { ReplyCardStatus } from "./card-builder.ts";
@@ -79,7 +79,7 @@ function resolveStreamOptions(override?: ReplyCardStreamOptions) {
 }
 
 function parseEnvInt(name: string): number | undefined {
-  const v = process.env[name]?.trim();
+  const v = runtimeEnv(name)?.trim();
   if (!v) return undefined;
   const n = Number.parseInt(v, 10);
   return Number.isFinite(n) ? n : undefined;

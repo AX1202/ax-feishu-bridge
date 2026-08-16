@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { BRIDGE_PATH, CHILD_SESSION_ENV, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, writeJson } from "../../feishu/config.ts";
+import { BRIDGE_PI_PATH, CHILD_SESSION_ENV, CONFIG_PI_PATH, DAEMON_LOG_PATH, DEBUG_PI_LOG_PATH, DEDUPE_PI_PATH, ensureRoot, loadConfig, mask, removePath, PI_SOURCE, setRuntimeSource, STATE_PI_PATH, writeJson } from "../../feishu/config.ts";
 import { debugLog } from "../../feishu/debug.ts";
 import { FeishuBridgeRuntime } from "../../feishu/bridge-runtime.ts";
 import { FeishuBridgeStore } from "../../feishu/bridge-store.ts";
@@ -32,6 +32,8 @@ import { PiConversationRuntime, handlePiMessageEnd } from "./PiConversationRunti
  */
 export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { extensionPath?: string }) {
   const extensionEntry = options?.extensionPath || fileURLToPath(import.meta.url);
+  // Pi 进程使用 Pi 自己的配置/状态/记录文件（默认即 Pi，显式声明便于维护）
+  setRuntimeSource(PI_SOURCE);
   if (process.env[CHILD_SESSION_ENV] === "1") {
     return;
   }
@@ -70,6 +72,10 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
     setStatusText(statusText(brand, status));
   }
 
+  function currentGatewayOwner() {
+    return readGatewayOwner(loadConfig()?.appId);
+  }
+  
   function withBuildTag(text: string) {
     return `${text}${buildTag}`;
   }
@@ -97,7 +103,7 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
       setStatusText(statusText(brand, "connected"));
       return;
     }
-    const owner = readGatewayOwner();
+    const owner = currentGatewayOwner();
     if (owner?.status === "connected") {
       setStatusText(statusText(brand, "connected"));
     } else if (owner?.status === "starting") {
@@ -143,7 +149,7 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
       throw new Error(`Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。`);
     }
     updateStatus("connecting");
-    const lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover));
+    const lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover), cfg.appId);
     if (lockResult.status === "busy") {
       updateStatus("owned");
       return { status: "owned" as const, owner: lockResult.owner };
@@ -224,7 +230,7 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
     return withDaemonSpawnLock(async () => {
       const cfg = loadConfig();
       if (!cfg) throw new Error(`Missing config. Run /feishu setup first. 配置不存在，请先运行 /feishu setup。`);
-      let owner = readGatewayOwner();
+      let owner = currentGatewayOwner();
       if (owner && owner.pid !== process.pid && !takeover) {
         return { status: "busy" as const, owner };
       }
@@ -238,7 +244,7 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
 
       // Re-check while holding the spawn lock. Another TUI may have started it
       // while this process was waiting for the lock.
-      owner = readGatewayOwner();
+      owner = currentGatewayOwner();
       if (owner && owner.pid !== process.pid && !takeover) {
         return { status: "busy" as const, owner };
       }
@@ -255,12 +261,12 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
       child.unref();
 
       await sleep(1500);
-      return { status: "started" as const, pid: child.pid, owner: readGatewayOwner() };
+      return { status: "started" as const, pid: child.pid, owner: currentGatewayOwner() };
     });
   }
 
   async function stopDaemon() {
-    const owner = readGatewayOwner();
+    const owner = currentGatewayOwner();
     if (!owner) {
       reapDetachedDaemonProcesses();
       return { status: "none" as const };
@@ -297,7 +303,7 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
         if (cmd === "setup") {
           const configToStart = await runSetup(ctx);
           if (configToStart) {
-            writeJson(CONFIG_PATH, configToStart);
+            writeJson(CONFIG_PI_PATH, configToStart);
             notifyDaemonStartResult(ctx, await startDaemon(false));
           }
           refreshStatusFromState();
@@ -342,11 +348,11 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
             return;
           }
           await stopDaemon();
-          removePath(CONFIG_PATH);
-          removePath(STATE_PATH);
-          removePath(DEDUPE_PATH);
-          removePath(`${DEDUPE_PATH}.lock`);
-          removePath(BRIDGE_PATH);
+          removePath(CONFIG_PI_PATH);
+          removePath(STATE_PI_PATH);
+          removePath(DEDUPE_PI_PATH);
+          removePath(`${DEDUPE_PI_PATH}.lock`);
+          removePath(BRIDGE_PI_PATH);
           conversations.resetMemory();
           messageHandler.reset();
           ensureRoot();
@@ -361,15 +367,15 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
         if (cmd === "status") {
           refreshStatusFromState();
           const cfg = loadConfig();
-          const owner = gatewayLock?.owner || readGatewayOwner();
+          const owner = gatewayLock?.owner || currentGatewayOwner();
           ctx.ui.notify(
             [
               `Status: ${lastStatusText || (loadConfig() ? "Feishu: disconnected" : "Feishu: not configured")}`,
               `Gateway owner: ${formatOwner(owner)}`,
               `Config: ${cfg ? `${cfg.domain}, appId=${mask(cfg.appId)}, groupPolicy=${cfg.groupPolicy}, autoStart=${cfg.autoStart !== false}` : "missing"}`,
-              `Path: ${CONFIG_PATH}`,
+              `Path: ${CONFIG_PI_PATH}`,
               `Gateway lock: ${gatewayLockPath()}`,
-              `Debug: ${DEBUG_LOG_PATH}`,
+              `Debug: ${DEBUG_PI_LOG_PATH}`,
               `Gateway log: ${DAEMON_LOG_PATH}`,
             ].join("\n"),
             "info",
@@ -377,11 +383,11 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
           return;
         }
         if (cmd === "debug") {
-          if (!existsSync(DEBUG_LOG_PATH)) {
+          if (!existsSync(DEBUG_PI_LOG_PATH)) {
             ctx.ui.notify("还没有飞书调试日志。请先在飞书里发一条消息给机器人。", "info");
             return;
           }
-          const lines = readFileSync(DEBUG_LOG_PATH, "utf8").trim().split("\n").slice(-20);
+          const lines = readFileSync(DEBUG_PI_LOG_PATH, "utf8").trim().split("\n").slice(-20);
           ctx.ui.notify(lines.join("\n"), "info");
           return;
         }
@@ -392,7 +398,7 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
             return;
           }
           cfg.autoStart = cfg.autoStart === false;
-          writeJson(CONFIG_PATH, cfg);
+          writeJson(CONFIG_PI_PATH, cfg);
           ctx.ui.notify(cfg.autoStart ? "飞书自动启动已开启。" : "飞书自动启动已关闭。", "info");
           refreshStatusFromState();
           return;
