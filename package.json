@@ -33,11 +33,12 @@
   },
   "exports": {
     "./pi": "./src/adapters/pi/index.ts",
-    "./harness": "./src/adapters/harness/index.ts",
+    "./harness": "./lib/adapters/harness/index.js",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "files": [
     "src",
+    "lib",
     ".pi",
     "cordis.patch.yml"
   ],
@@ -51,6 +52,8 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "test": "node --experimental-strip-types --experimental-transform-types --import ./test/register.mjs --test test/*.test.mjs test/*.test.ts"
   }
 }
