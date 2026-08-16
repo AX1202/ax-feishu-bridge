@@ -6,7 +6,9 @@
     "strict": false,
     "esModuleInterop": true,
     "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
     "types": ["node"]
   },
-  "include": [".pi/extensions/**/*.ts"]
+  "include": [".pi/extensions/**/*.ts", "src/**/*.ts"]
 }

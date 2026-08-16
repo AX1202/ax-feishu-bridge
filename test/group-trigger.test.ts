@@ -5,7 +5,7 @@ import {
   parseGroupKeywords,
   shouldAcceptGroupMessage,
   textMatchesKeywords,
-} from "../.pi/extensions/feishu/group-trigger.ts";
+} from "../src/feishu/group-trigger.ts";
 
 test("parseGroupKeywords splits comma/semicolon and trims", () => {
   assert.deepEqual(parseGroupKeywords("志胜, zhisheng; ZS"), ["志胜", "zhisheng", "ZS"]);

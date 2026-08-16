@@ -1,6 +1,7 @@
-import { type ThinkingStatus } from "./thinking.js";
+import { type ThinkingStatus } from "./thinking.ts";
+import type { RuntimeModel } from "./runtime.ts";
 
-export function modelLabel(model: any) {
+export function modelLabel(model: RuntimeModel | undefined) {
   if (!model) return "未选择";
   return `${model.provider}/${model.id}`;
 }
@@ -27,7 +28,7 @@ export type ResumeSessionPage = {
   items: ResumeSessionItem[];
 };
 
-export function buildModelCard(key: string, models: any[], currentModel: any) {
+export function buildModelCard(key: string, models: RuntimeModel[], currentModel: RuntimeModel | undefined) {
   const current = modelLabel(currentModel);
   const elements: any[] = [
     {
@@ -74,20 +75,20 @@ export function buildModelCard(key: string, models: any[], currentModel: any) {
   };
 }
 
-export function buildThinkingCard(key: string, currentModel: any, status: ThinkingStatus) {
+export function buildThinkingCard(key: string, currentModel: RuntimeModel | undefined, status: ThinkingStatus) {
   const model = modelLabel(currentModel);
   const elements: any[] = [
     {
       tag: "markdown",
-      content: status.source === "unavailable"
-        ? `当前模型：**${model}**\n无法从 Pi 读取这个模型可用的 thinking levels，因此未显示任何猜测的选项。`
+      content: !status.available
+        ? `当前模型：**${model}**\n无法读取这个模型可用的 thinking levels，因此未显示任何猜测的选项。`
         : status.availableLevels.length === 0
-          ? `当前模型：**${model}**\nPi 未返回可用的 thinking levels。`
-          : `当前模型：**${model}**\nCurrent: **${escapeMarkdown(status.currentLevel || "(unknown)")}**\n以下选项由 Pi 当前会话直接返回。`,
+          ? `当前模型：**${model}**\n当前模型未返回可用的 thinking levels。`
+          : `当前模型：**${model}**\nCurrent: **${escapeMarkdown(status.currentLevel || "(unknown)")}**\n以下选项由当前会话直接返回。`,
     },
   ];
 
-  if (status.source === "pi") {
+  if (status.available) {
     for (let i = 0; i < status.availableLevels.length; i += 3) {
       const row = status.availableLevels.slice(i, i + 3);
       elements.push({

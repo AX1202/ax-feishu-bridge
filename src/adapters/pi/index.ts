@@ -3,29 +3,35 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { buildModelCard, buildResumeCard, buildThinkingCard, parseModelActionValue, parseResumePageActionValue, parseResumeSelectActionValue, parseThinkingActionValue } from "./cards.js";
-import { BRIDGE_PATH, CHILD_SESSION_ENV, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, writeJson } from "./config.js";
-import { debugLog } from "./debug.js";
-import { FeishuBridgeRuntime } from "./bridge-runtime.js";
-import { FeishuBridgeStore } from "./bridge-store.js";
-import { ConversationManager } from "./conversation-manager.js";
-import { FeishuDelivery } from "./delivery.js";
-import { acquireGatewayLock, gatewayLockPath, readGatewayOwner, type GatewayLockHandle, type GatewayOwner } from "./gateway-lock.js";
-import { FeishuMessageHandler } from "./message-handler.js";
-import { runSetup, uiConfirm } from "./setup.js";
-import { buildCardKitCardJson } from "./card-builder.js";
-import { buildReplyCard, parseStopTaskActionValue } from "./reply-card.js";
+import { BRIDGE_PATH, CHILD_SESSION_ENV, CONFIG_PATH, DAEMON_LOG_PATH, DEBUG_LOG_PATH, DEDUPE_PATH, ensureRoot, loadConfig, mask, removePath, STATE_PATH, writeJson } from "../../feishu/config.ts";
+import { debugLog } from "../../feishu/debug.ts";
+import { FeishuBridgeRuntime } from "../../feishu/bridge-runtime.ts";
+import { FeishuBridgeStore } from "../../feishu/bridge-store.ts";
+import { FeishuDelivery } from "../../feishu/delivery.ts";
+import { acquireGatewayLock, gatewayLockPath, readGatewayOwner, type GatewayLockHandle, type GatewayOwner } from "../../feishu/gateway-lock.ts";
+import { FeishuMessageHandler } from "../../feishu/message-handler.ts";
+import { runSetup, uiConfirm } from "./setup.ts";
 import {
   RUNTIME_CONFIG_KEYS,
   clearRuntimeOverrides,
   formatRuntimeConfig,
   getRuntimeOverrides,
   setRuntimeConfig,
-} from "./runtime-config.js";
-import { BotUnavailableError, FeishuTransport } from "./transport.js";
-import type { FeishuConfig, FeishuStatus } from "./types.js";
+} from "../../feishu/runtime-config.ts";
+import { BotUnavailableError, FeishuTransport } from "../../feishu/transport.ts";
+import type { FeishuConfig, FeishuStatus } from "../../feishu/types.ts";
+import { createCardActionHandler } from "../../feishu/card-actions.ts";
+import { PiConversationRuntime, handlePiMessageEnd } from "./PiConversationRuntime.ts";
 
-export default function feishuExtension(pi: ExtensionAPI) {
+/**
+ * Pi Runtime 适配器的扩展入口（薄 PI bootstrap）：
+ * 只保留 Pi 相关的启动/命令/daemon/工具注册逻辑，
+ * 其余飞书逻辑全部在 src/feishu 公共层。
+ *
+ * @param options.extensionPath 当前扩展入口文件路径（daemon 用 -e 重新加载它）。
+ */
+export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { extensionPath?: string }) {
+  const extensionEntry = options?.extensionPath || fileURLToPath(import.meta.url);
   if (process.env[CHILD_SESSION_ENV] === "1") {
     return;
   }
@@ -39,7 +45,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
   const initialConfig = loadConfig();
-  const conversations = new ConversationManager(process.cwd(), bridge, {
+  const conversations = new PiConversationRuntime(process.cwd(), bridge, {
     promptNotifySec: initialConfig?.promptNotifySec,
     promptTimeoutSec: initialConfig?.promptTimeoutSec,
   });
@@ -123,7 +129,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   pi.on("message_end", async (event, ctx) => {
-    bridge.handleMessageEnd(ctx.sessionManager.getSessionId(), undefined, event.message);
+    handlePiMessageEnd(bridge, ctx.sessionManager.getSessionId(), undefined, event.message);
   });
 
   async function start(config?: FeishuConfig, options: { takeover?: boolean } = {}) {
@@ -153,77 +159,7 @@ export default function feishuExtension(pi: ExtensionAPI) {
         process.exit(0);
       }
     });
-    transport = new FeishuTransport(cfg, (msg) => messageHandler.handle(msg), async (action) => {
-      const copy = parseCopyMarkdownActionValue(action.value);
-      if (copy) {
-        const source = transport?.getMarkdownCopySource(copy.copySourceId);
-        await transport?.replyPlainText(action.messageId, source || "MD 原文已过期，请重新生成卡片。");
-        return;
-      }
-      const stopTask = parseStopTaskActionValue(action.value);
-      if (stopTask) {
-        debugLog("feishu.card.stop_requested", {
-          key: stopTask.key,
-          runId: stopTask.runId,
-          cardMessageId: action.messageId,
-          chatId: action.chatId,
-        });
-        // 停止时由 ReplyCard.stopImmediately 更新同一张卡；回调不再另发文本
-        const result = await conversations.stopConversation(stopTask.key, async () => undefined, stopTask.runId);
-        const status = result.status === "stopped"
-          ? "stopped"
-          : result.status === "failed"
-            ? "failed"
-            : "inactive";
-        debugLog("feishu.card.stop_final_update_done", {
-          key: stopTask.key,
-          runId: stopTask.runId,
-          cardMessageId: action.messageId,
-          result: result.status,
-        });
-        // CardKit 流式卡是 schema 2.0；回调必须返回 2.0，否则会 200830/200671
-        // body 优先用 cardkit.close() 已写入的累计文本，避免覆盖已输出内容
-        return buildCardKitCardJson({
-          status,
-          body: "body" in result ? result.body : result.message || "已停止",
-          key: stopTask.key,
-          runId: stopTask.runId,
-          streaming: false,
-        });
-      }
-      const resumePage = parseResumePageActionValue(action.value);
-      if (resumePage) {
-        const page = await conversations.listResumeSessions(resumePage.key, resumePage.scope, resumePage.page);
-        return buildResumeCard(page);
-      }
-      const resumeSelect = parseResumeSelectActionValue(action.value);
-      if (resumeSelect) {
-        await conversations.resumeConversation(resumeSelect.key, resumeSelect.sessionPath, async (reply) => {
-          await transport?.replyText(action.messageId, reply);
-        });
-        const page = await conversations.listResumeSessions(resumeSelect.key, resumeSelect.scope, resumeSelect.page);
-        return buildResumeCard(page);
-      }
-      const selectedThinking = parseThinkingActionValue(action.value);
-      if (selectedThinking) {
-        await conversations.selectThinkingLevel(selectedThinking.key, selectedThinking.level, async (reply) => {
-          await transport?.replyText(action.messageId, reply);
-        });
-        const [currentModel, thinking] = await Promise.all([
-          conversations.getSelectedModel(selectedThinking.key),
-          conversations.getThinkingStatus(selectedThinking.key),
-        ]);
-        return buildThinkingCard(selectedThinking.key, currentModel, thinking);
-      }
-      const selected = parseModelActionValue(action.value);
-      if (!selected) return;
-      await conversations.selectModel(selected.key, selected.provider, selected.modelId, async (reply) => {
-        await transport?.replyText(action.messageId, reply);
-      });
-      const models = await conversations.getAvailableModels();
-      const currentModel = await conversations.getSelectedModel(selected.key);
-      return buildModelCard(selected.key, models, currentModel);
-    });
+    transport = new FeishuTransport(cfg, (msg) => messageHandler.handle(msg), createCardActionHandler(conversations, () => transport));
     try {
       await transport.start();
       gatewayLock.startHeartbeat();
@@ -265,7 +201,6 @@ export default function feishuExtension(pi: ExtensionAPI) {
   }
 
   function daemonSpec() {
-    const extensionPath = fileURLToPath(import.meta.url);
     const piBin = process.env.PI_BIN || "pi";
     const args = [
       "--mode", "rpc",
@@ -275,9 +210,9 @@ export default function feishuExtension(pi: ExtensionAPI) {
       "--no-themes",
       "--no-context-files",
       "--no-builtin-tools",
-      "-e", extensionPath,
+      "-e", extensionEntry,
     ];
-    return { extensionPath, piBin, args };
+    return { extensionPath: extensionEntry, piBin, args };
   }
 
   function daemonCommand() {
@@ -500,14 +435,6 @@ export default function feishuExtension(pi: ExtensionAPI) {
     await stop();
     clearStatus();
   });
-}
-
-function parseCopyMarkdownActionValue(value: unknown): { copySourceId: string } | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const raw = value as any;
-  if (raw.action !== "pi_feishu_copy_markdown") return undefined;
-  if (typeof raw.copySourceId !== "string" || !raw.copySourceId) return undefined;
-  return { copySourceId: raw.copySourceId };
 }
 
 type DaemonProcessInfo = {

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join, resolve } from "node:path";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const { waitForPrompt } = await import(join(repoRoot, ".pi/extensions/feishu/prompt-timeout.ts"));
+const { waitForPrompt } = await import(join(repoRoot, "src/feishu/prompt-timeout.ts"));
 
 function deferred() {
   let resolveFn;

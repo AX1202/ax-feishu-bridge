@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ConversationManager } from "../../.pi/extensions/feishu/conversation-manager.js";
+import { PiConversationRuntime } from "../../src/adapters/pi/PiConversationRuntime.js";
 
 export default async function modelRuntimeExtension(pi: ExtensionAPI) {
-  const conversations = new ConversationManager(process.cwd());
+  const conversations = new PiConversationRuntime(process.cwd());
   const provider = "fixture-provider";
   const modelId = "target-model";
   const models = await conversations.getAvailableModels();

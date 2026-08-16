@@ -1,32 +1,39 @@
-import { detectCodeLanguage, decodeTextFile, detectImageMime, type FeishuImageInput, isSupportedImageMime, isSupportedTextFile } from "./attachments.js";
-import { buildModelCard, buildResumeCard, buildThinkingCard } from "./cards.js";
-import type { ConversationManager } from "./conversation-manager.js";
-import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.js";
-import { debugLog } from "./debug.js";
-import { loadConfig } from "./config.js";
+import { detectCodeLanguage, decodeTextFile, detectImageMime, type FeishuImageInput, isSupportedImageMime, isSupportedTextFile } from "./attachments.ts";
+import { buildModelCard, buildResumeCard, buildThinkingCard } from "./cards.ts";
+import type { ConversationRuntime } from "./runtime.ts";
+import { claimFeishuMessage, markFeishuMessage } from "./dedupe-store.ts";
+import { debugLog } from "./debug.ts";
+import { loadConfig } from "./config.ts";
 import {
   clearRuntimeOverrides,
   formatRuntimeConfig,
   getRuntimeOverrides,
   setRuntimeConfig,
-} from "./runtime-config.js";
-import { conversationKey, conversationLabel, buildPromptWithQuote, getCommandList, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.js";
-import { ReplyCard } from "./reply-card.js";
-import type { FeishuBridgeStore } from "./bridge-store.js";
-import type { FeishuTransport } from "./transport.js";
-import type { FeishuMessage } from "./types.js";
+} from "./runtime-config.ts";
+import { conversationKey, conversationLabel, buildPromptWithQuote, getCommandList, normalizeForDedupe, parseBotCommand, parseMessageInput, pruneRecentMap } from "./messages.ts";
+import { ReplyCard } from "./reply-card.ts";
+import type { FeishuBridgeStore } from "./bridge-store.ts";
+import type { FeishuTransport } from "./transport.ts";
+import type { FeishuMessage } from "./types.ts";
 
 const CONTENT_DEDUPE_TTL_MS = 5_000;
 
 export class FeishuMessageHandler {
   private readonly seen = new Set<string>();
   private readonly recentContent = new Map<string, number>();
+  private readonly conversations: ConversationRuntime;
+  private readonly getTransport: () => FeishuTransport | undefined;
+  private readonly bridgeStore?: FeishuBridgeStore;
 
   constructor(
-    private readonly conversations: ConversationManager,
-    private readonly getTransport: () => FeishuTransport | undefined,
-    private readonly bridgeStore?: FeishuBridgeStore,
-  ) {}
+    conversations: ConversationRuntime,
+    getTransport: () => FeishuTransport | undefined,
+    bridgeStore?: FeishuBridgeStore,
+  ) {
+    this.conversations = conversations;
+    this.getTransport = getTransport;
+    this.bridgeStore = bridgeStore;
+  }
 
   reset() {
     this.seen.clear();
@@ -100,11 +107,11 @@ export class FeishuMessageHandler {
       }
 
       const model = await this.conversations.getSelectedModel(key);
-      const modelSupportsImage = Boolean(model && Array.isArray((model as any).input) && (model as any).input.includes("image"));
+      const modelSupportsImage = Boolean(model?.supportsImage);
       debugLog("feishu.handler.model", {
         messageId: msg.messageId,
         key,
-        model: model ? `${(model as any).provider}/${(model as any).id}` : undefined,
+        model: model ? `${model.provider}/${model.id}` : undefined,
         modelSupportsImage,
       });
 
@@ -235,7 +242,7 @@ export class FeishuMessageHandler {
           `状态: ${stateLine}`,
           `目录: ${st.cwd}`,
           `模型: ${model}`,
-          `thinking: ${thinking.source === "pi" ? thinking.currentLevel || "(unknown)" : "(unavailable)"}`,
+          `thinking: ${thinking.available ? thinking.currentLevel || "(unknown)" : "(unavailable)"}`,
           `上下文: ${ctxLine}`,
         ].join("\n"),
       );

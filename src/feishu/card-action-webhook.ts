@@ -1,17 +1,21 @@
 import http from "node:http";
-import { debugLog } from "./debug.js";
-import type { FeishuCardAction, FeishuConfig } from "./types.js";
+import { debugLog } from "./debug.ts";
+import type { FeishuCardAction, FeishuConfig } from "./types.ts";
 
 export class FeishuCardActionWebhook {
   private server: http.Server | undefined;
   private readonly host: string;
   private readonly port: number;
   private readonly path: string;
+  private readonly config: FeishuConfig;
+  private readonly onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>;
 
   constructor(
-    private readonly config: FeishuConfig,
-    private readonly onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>,
+    config: FeishuConfig,
+    onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>,
   ) {
+    this.config = config;
+    this.onCardAction = onCardAction;
     this.host = config.cardActionWebhookHost || "0.0.0.0";
     this.port = config.cardActionWebhookPort || 3001;
     this.path = config.cardActionWebhookPath || "/webhook/card";

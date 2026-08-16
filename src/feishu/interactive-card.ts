@@ -1,4 +1,4 @@
-import type { FeishuAttachment } from "./types.js";
+import type { FeishuAttachment } from "./types.ts";
 
 const INTERACTIVE_CARD_FALLBACK = "[Interactive Card]";
 

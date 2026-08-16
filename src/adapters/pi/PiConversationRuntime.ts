@@ -9,14 +9,22 @@ import {
   getAgentDir,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import type { FeishuBridgeRuntime } from "./bridge-runtime.js";
-import { CHILD_SESSION_ENV, ensureRoot, readJson, STATE_PATH, writeJson } from "./config.js";
-import { debugLog } from "./debug.js";
-import { waitForPrompt } from "./prompt-timeout.js";
-import type { ResumeScope, ResumeSessionPage } from "./cards.js";
-import type { ReplyCardSink } from "./reply-card.js";
-import { normalizeThinkingLevels, type ThinkingStatus } from "./thinking.js";
-import type { FeishuState } from "./types.js";
+import type { FeishuBridgeRuntime, BridgeJobEvent } from "../../feishu/bridge-runtime.ts";
+import { CHILD_SESSION_ENV, ensureRoot, readJson, STATE_PATH, writeJson } from "../../feishu/config.ts";
+import { debugLog } from "../../feishu/debug.ts";
+import { waitForPrompt } from "../../feishu/prompt-timeout.ts";
+import type { ResumeScope, ResumeSessionPage } from "../../feishu/cards.ts";
+import type { ReplyCardSink } from "../../feishu/reply-card.ts";
+import { normalizeThinkingLevels, type ThinkingStatus } from "../../feishu/thinking.ts";
+import type { FeishuState } from "../../feishu/types.ts";
+import type { ConversationRuntime, ConversationStatus, ContextUsage, RuntimeModel, StopConversationResult, ConversationTimeouts } from "../../feishu/runtime.ts";
+import { ensureWorkspaceExists, resolveWorkspacePath } from "../../feishu/workspace.ts";
+
+/**
+ * Pi Runtime 适配器：
+ * 把飞书公共层需要的会话能力映射到 Pi 的 AgentSession API。
+ * 第一阶段保持与原 ConversationManager 完全一致的行为。
+ */
 
 type ActiveRun = {
   session: AgentSession;
@@ -34,22 +42,9 @@ type ModelRuntimeAdapter = {
   sessionOptions: Record<string, unknown>;
 };
 
-export type ConversationTimeouts = {
-  /** Seconds before a long-running turn sends a non-fatal notice (0 disables). */
-  promptNotifySec?: number;
-  /** Hard prompt timeout in seconds; 0 waits indefinitely. */
-  promptTimeoutSec?: number;
-};
-
-export type StopConversationResult =
-  | { status: "stopped"; message: string; body: string }
-  | { status: "not_running"; message: string }
-  | { status: "stale"; message: string }
-  | { status: "failed"; message: string };
-
 const RESUME_PAGE_SIZE = 10;
 
-export class ConversationManager {
+export class PiConversationRuntime implements ConversationRuntime {
   private readonly sessions = new Map<string, Promise<AgentSession>>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly activeRuns = new Map<string, ActiveRun>();
@@ -57,12 +52,18 @@ export class ConversationManager {
   private defaultProvider: string | undefined;
   private defaultModelId: string | undefined;
   private state: FeishuState;
+  private readonly cwd: string;
+  private readonly bridge?: FeishuBridgeRuntime;
+  private readonly timeouts: ConversationTimeouts;
 
   constructor(
-    private readonly cwd: string,
-    private readonly bridge?: FeishuBridgeRuntime,
-    private readonly timeouts: ConversationTimeouts = {},
+    cwd: string,
+    bridge?: FeishuBridgeRuntime,
+    timeouts: ConversationTimeouts = {},
   ) {
+    this.cwd = cwd;
+    this.bridge = bridge;
+    this.timeouts = timeouts;
     ensureRoot();
     this.state = readJson<FeishuState>(STATE_PATH, { sessions: {} });
     this.state.sessions ||= {};
@@ -159,20 +160,19 @@ export class ConversationManager {
   }
 
   /** 供 /status 使用 */
-  getStatus(key: string) {
+  getStatus(key: string): ConversationStatus {
     const active = this.activeRuns.get(key);
     return {
       cwd: this.getWorkspace(key),
       hasActiveRun: Boolean(active),
       activeStopped: Boolean(active?.stopped),
-      sessionFile: this.state.sessions[key],
     };
   }
 
   async getActualModel(key: string) {
     const model = await this.getSelectedModel(key);
     if (!model) return "默认模型";
-    return `${(model as any).provider}/${(model as any).id}`;
+    return `${model.provider}/${model.id}`;
   }
 
   /** 当前 Pi 会话的思考强度和该模型可用的档位。 */
@@ -181,7 +181,7 @@ export class ConversationManager {
     return this.getThinkingStatusForSession(session);
   }
 
-  async getContextStatus(key: string) {
+  async getContextStatus(key: string): Promise<ContextUsage | null> {
     try {
       const session = await this.getSession(key);
       const anySession = session as any;
@@ -356,7 +356,7 @@ export class ConversationManager {
     const next = previous.then(async () => {
       const session = await this.getSession(key);
       const status = this.getThinkingStatusForSession(session);
-      if (status.source !== "pi") {
+      if (!status.available) {
         await onReply("无法从 Pi 读取当前模型可用的 thinking levels，未做任何修改。请稍后重试。");
         return;
       }
@@ -414,17 +414,25 @@ export class ConversationManager {
     await next;
   }
 
-  async getAvailableModels() {
+  async getAvailableModels(): Promise<RuntimeModel[]> {
     const modelRuntime = await this.getModelRuntime();
     const available = await modelRuntime.getAvailable();
-    return [...available].sort((a, b) => {
-      const providerCmp = a.provider.localeCompare(b.provider);
-      if (providerCmp !== 0) return providerCmp;
-      return a.id.localeCompare(b.id);
-    });
+    return [...available]
+      .map(toRuntimeModel)
+      .sort((a, b) => {
+        const providerCmp = a.provider.localeCompare(b.provider);
+        if (providerCmp !== 0) return providerCmp;
+        return a.id.localeCompare(b.id);
+      });
   }
 
-  async getSelectedModel(key: string) {
+  async getSelectedModel(key: string): Promise<RuntimeModel | undefined> {
+    const native = await this.getSelectedNativeModel(key);
+    return native ? toRuntimeModel(native) : undefined;
+  }
+
+  /** 内部使用的原生 Pi 模型（不跨出本适配器）。 */
+  private async getSelectedNativeModel(key: string) {
     const modelRuntime = await this.getModelRuntime();
     const selected = this.state.models?.[key];
     if (selected) {
@@ -443,7 +451,8 @@ export class ConversationManager {
       }
     }
     const available = await this.getAvailableModels();
-    return available[0];
+    const first = available[0];
+    return first ? modelRuntime.getModel(first.provider, first.id) : undefined;
   }
 
   private getModelRuntime() {
@@ -474,16 +483,16 @@ export class ConversationManager {
       ? sessionApi.thinkingLevel
       : undefined;
     if (typeof sessionApi.getAvailableThinkingLevels !== "function") {
-      return { currentLevel, availableLevels: [], source: "unavailable" };
+      return { currentLevel, availableLevels: [], available: false };
     }
     try {
       return {
         currentLevel,
         availableLevels: normalizeThinkingLevels(sessionApi.getAvailableThinkingLevels()),
-        source: "pi",
+        available: true,
       };
     } catch {
-      return { currentLevel, availableLevels: [], source: "unavailable" };
+      return { currentLevel, availableLevels: [], available: false };
     }
   }
 
@@ -589,7 +598,7 @@ export class ConversationManager {
         }
       }
       if (event.type === "message_end") {
-        this.bridge?.handleMessageEnd(session.sessionId, key, event.message);
+        handlePiMessageEnd(this.bridge, session.sessionId, key, event.message);
       }
     });
 
@@ -722,40 +731,98 @@ function extractLastAssistantText(session: AgentSession): string {
   return "";
 }
 
-function resolveWorkspacePath(input: string) {
-  const trimmed = input.trim();
-  if (!trimmed) {
-    throw new Error("请在 /workspace 后面带上目录路径，例如：/workspace /Users/ax/project");
-  }
-
-  const expanded = trimmed === "~" || trimmed.startsWith("~/")
-    ? join(homedir(), trimmed.slice(2))
-    : trimmed;
-
-  if (!isAbsolute(expanded)) {
-    throw new Error("当前只支持绝对路径或 ~/ 开头的路径。");
-  }
-
-  const resolved = resolve(expanded);
-  ensureWorkspaceExists(resolved);
-  return realpathSync(resolved);
+/** 把 Pi 原生模型对象转换成平台无关的 RuntimeModel（禁止原生对象泄漏到飞书层）。 */
+function toRuntimeModel(model: any): RuntimeModel {
+  const input = Array.isArray(model?.input) ? model.input : [];
+  return {
+    provider: String(model?.provider ?? ""),
+    id: String(model?.id ?? ""),
+    name: typeof model?.name === "string" ? model.name : undefined,
+    supportsImage: input.includes("image"),
+  };
 }
 
-function ensureWorkspaceExists(path: string) {
-  if (!existsSync(path)) {
-    throw new Error(`工作区不存在：${path}`);
+/**
+ * 把 Pi 的 message_end 事件解析成平台无关的桥接事件（Pi 内部任务回传）。
+ * 原 ConversationManager.handleMessageEnd 的等价逻辑。
+ */
+export function handlePiMessageEnd(
+  bridge: FeishuBridgeRuntime | undefined,
+  sessionId: string | undefined,
+  sessionKey: string | undefined,
+  message: any,
+) {
+  if (!bridge || !sessionId || !message) return;
+
+  if (message.role === "toolResult" && message.toolName === "schedule_prompt") {
+    const details = message.details || {};
+    if (details.action !== "add") return;
+    const rawJobs = Array.isArray(details.jobs) ? details.jobs : [];
+    const jobs: Array<{ id: string; name?: string }> = [];
+    for (const job of rawJobs) {
+      if (!job?.id) continue;
+      jobs.push({
+        id: String(job.id),
+        name: typeof job.name === "string" ? job.name : undefined,
+      });
+    }
+    if (jobs.length) {
+      bridge.handleJobEvent({ kind: "created", sessionId, sessionKey, jobs });
+    }
+    return;
   }
 
-  let stat;
-  try {
-    stat = statSync(path);
-  } catch {
-    throw new Error(`无法访问工作区：${path}`);
+  if (message.role === "custom" && message.customType === "scheduled_prompt") {
+    const details = message.details || {};
+    const jobId = typeof details.jobId === "string" ? details.jobId : "";
+    if (!jobId) return;
+
+    if (details.mode === "subagent_done" && typeof details.output === "string") {
+      bridge.handleJobEvent({
+        kind: "done",
+        sessionId,
+        jobId,
+        text: details.output,
+        dedupeKey: `subagent_done:${jobId}:${message.id || details.output}`,
+      });
+      return;
+    }
+
+    if (details.mode === "subagent_error" && typeof details.error === "string") {
+      bridge.handleJobEvent({
+        kind: "error",
+        sessionId,
+        jobId,
+        error: details.error,
+        dedupeKey: `subagent_error:${jobId}:${message.id || details.error}`,
+      });
+      return;
+    }
+
+    bridge.handleJobEvent({ kind: "marker", sessionId, jobId });
+    return;
   }
 
-  if (!stat.isDirectory()) {
-    throw new Error(`工作区不是目录：${path}`);
+  if (message.role === "assistant") {
+    const text = extractMessageText(message);
+    bridge.handleJobEvent({
+      kind: "output",
+      sessionId,
+      text,
+      messageId: message.id,
+      timestamp: message.timestamp,
+    });
   }
+}
+
+function extractMessageText(message: any) {
+  const content = message.content;
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .map((part) => part?.type === "text" ? part.text : "")
+    .join("")
+    .trim();
 }
 
 function summarizeFirstMessage(text: string) {

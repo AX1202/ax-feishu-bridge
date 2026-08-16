@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CardKitStream } from "../.pi/extensions/feishu/cardkit-stream.ts";
+import { CardKitStream } from "../src/feishu/cardkit-stream.ts";
 
 test("CardKit creates a reply-in-progress card before the first text delta", async () => {
   const originalFetch = globalThis.fetch;

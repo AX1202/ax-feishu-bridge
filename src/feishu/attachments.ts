@@ -14,7 +14,7 @@ const SUPPORTED_TEXT_BASENAME = new Set(["dockerfile", "makefile", ".gitignore"]
 const MAX_TEXT_FILE_BYTES = 800_000;
 const MAX_TEXT_FILE_CHARS = 16_000;
 
-export function isSupportedImageMime(mimeType: string | undefined) {
+export function isSupportedImageMime(mimeType: string | undefined): mimeType is string {
   return Boolean(mimeType && SUPPORTED_IMAGE_MIME.has(mimeType));
 }
 

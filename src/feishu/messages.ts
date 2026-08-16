@@ -1,5 +1,5 @@
-import { extractTextFromInteractiveCard } from "./interactive-card.js";
-import type { FeishuAttachment, FeishuMessage, ParsedMessageInput } from "./types.js";
+import { extractTextFromInteractiveCard } from "./interactive-card.ts";
+import type { FeishuAttachment, FeishuMessage, ParsedMessageInput } from "./types.ts";
 
 export type BotCommand =
   | { name: "new" }

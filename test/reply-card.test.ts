@@ -6,7 +6,7 @@ import {
   buildStopButton,
   parseStopTaskActionValue,
   STOP_ACTION,
-} from "../.pi/extensions/feishu/card-builder.ts";
+} from "../src/feishu/card-builder.ts";
 
 function hasStopControl(card: unknown) {
   const s = JSON.stringify(card);

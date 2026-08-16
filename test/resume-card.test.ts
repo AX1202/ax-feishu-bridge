@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildResumeCard } from "../.pi/extensions/feishu/cards.ts";
+import { buildResumeCard } from "../src/feishu/cards.ts";
 
 function resumeCard(scope: "current" | "all" = "current") {
   return buildResumeCard({

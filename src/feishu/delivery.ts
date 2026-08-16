@@ -1,15 +1,18 @@
-import { loadConfig } from "./config.js";
-import { debugLog } from "./debug.js";
-import type { FeishuRoute } from "./types.js";
-import type { FeishuTransport } from "./transport.js";
-import { buildMarkdownCards, buildPostMessages, chooseMessageMode } from "./rich-text.js";
+import { loadConfig } from "./config.ts";
+import { debugLog } from "./debug.ts";
+import type { FeishuRoute } from "./types.ts";
+import type { FeishuTransport } from "./transport.ts";
+import { buildMarkdownCards, buildPostMessages, chooseMessageMode } from "./rich-text.ts";
 
 const TEXT_CHUNK_MAX_BYTES = 120 * 1024;
 
 export class FeishuDelivery {
   private sdkClient: any;
+  private readonly getTransport: () => FeishuTransport | undefined;
 
-  constructor(private readonly getTransport: () => FeishuTransport | undefined) {}
+  constructor(getTransport: () => FeishuTransport | undefined) {
+    this.getTransport = getTransport;
+  }
 
   async send(route: FeishuRoute, text: string) {
     const transport = this.getTransport();

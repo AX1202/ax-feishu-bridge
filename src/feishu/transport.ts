@@ -1,14 +1,14 @@
-import type { FeishuCardAction, FeishuConfig, FeishuMessage } from "./types.js";
-import { loadConfig } from "./config.js";
-import { debugLog } from "./debug.js";
+import type { FeishuCardAction, FeishuConfig, FeishuMessage } from "./types.ts";
+import { loadConfig } from "./config.ts";
+import { debugLog } from "./debug.ts";
 import {
   extractPlainTextForTrigger,
   shouldAcceptGroupMessage,
-} from "./group-trigger.js";
-import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./rich-text.js";
-import { withRetry } from "./retry.js";
-import { extractTextFromMsgType } from "./interactive-card.js";
-import { FeishuCardActionWebhook } from "./card-action-webhook.js";
+} from "./group-trigger.ts";
+import { buildMarkdownCardParts, buildPostMessages, chooseMessageMode } from "./rich-text.ts";
+import { withRetry } from "./retry.ts";
+import { extractTextFromMsgType } from "./interactive-card.ts";
+import { FeishuCardActionWebhook } from "./card-action-webhook.ts";
 
 const TEXT_CHUNK_MAX_BYTES = 120 * 1024;
 
@@ -32,6 +32,9 @@ export class FeishuTransport {
   private readonly markdownCopySources = new Map<string, string>();
   private readonly markdownCopySourceOrder: string[] = [];
   private markdownCopySeq = 0;
+  private readonly config: FeishuConfig;
+  private readonly onMessage: (msg: FeishuMessage) => Promise<void>;
+  private readonly onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>;
 
   private sendRetries() {
     return this.config.sendMaxRetries ?? 2;
@@ -42,10 +45,14 @@ export class FeishuTransport {
   }
 
   constructor(
-    private readonly config: FeishuConfig,
-    private readonly onMessage: (msg: FeishuMessage) => Promise<void>,
-    private readonly onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>,
-  ) {}
+    config: FeishuConfig,
+    onMessage: (msg: FeishuMessage) => Promise<void>,
+    onCardAction: (action: FeishuCardAction) => Promise<object | undefined | void>,
+  ) {
+    this.config = config;
+    this.onMessage = onMessage;
+    this.onCardAction = onCardAction;
+  }
 
   /** 热读有效配置（含 runtime-overrides）；失败回退 constructor 快照 */
   private effectiveConfig(): FeishuConfig {

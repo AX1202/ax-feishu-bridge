@@ -4,9 +4,9 @@
  * 我们侧只需定期 PUT 完整 markdown 内容。
  * running 卡必须带「停止」按钮（与 card-builder 契约一致）。
  */
-import { buildCardKitCardJson } from "./card-builder.js";
-import { debugLog } from "./debug.js";
-import { withRetry } from "./retry.js";
+import { buildCardKitCardJson } from "./card-builder.ts";
+import { debugLog } from "./debug.ts";
+import { withRetry } from "./retry.ts";
 
 type CardKitResponse = { code: number; msg: string; data?: any };
 
@@ -42,15 +42,25 @@ export class CardKitStream {
   private readonly conversationKey?: string;
   private readonly runId?: string;
   private readonly onOutboundMessageId?: (messageId: string) => void;
+  private readonly appId: string;
+  private readonly appSecret: string;
+  private readonly domain: "feishu" | "lark";
+  private readonly replyToMessageId: string;
+  private readonly fallbackReply: (text: string) => Promise<void>;
 
   constructor(
-    private readonly appId: string,
-    private readonly appSecret: string,
-    private readonly domain: "feishu" | "lark",
-    private readonly replyToMessageId: string,
-    private readonly fallbackReply: (text: string) => Promise<void>,
+    appId: string,
+    appSecret: string,
+    domain: "feishu" | "lark",
+    replyToMessageId: string,
+    fallbackReply: (text: string) => Promise<void>,
     options?: CardKitStreamOptions,
   ) {
+    this.appId = appId;
+    this.appSecret = appSecret;
+    this.domain = domain;
+    this.replyToMessageId = replyToMessageId;
+    this.fallbackReply = fallbackReply;
     this.printFrequencyMs = Math.max(20, options?.printFrequencyMs ?? 50);
     this.printStep = Math.max(1, options?.printStep ?? 1);
     this.pushIntervalMs = Math.max(50, options?.pushIntervalMs ?? 120);

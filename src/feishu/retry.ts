@@ -1,4 +1,4 @@
-import { debugLog } from "./debug.js";
+import { debugLog } from "./debug.ts";
 
 export type RetryOptions = {
   maxRetries?: number;

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { parseGroupKeywords } from "./group-trigger.js";
+import { parseGroupKeywords } from "./group-trigger.ts";
 
 /** 运行时可改配置白名单（不含密钥/连接通道） */
 export const RUNTIME_CONFIG_KEYS = [

@@ -1,5 +1,5 @@
-import { BRIDGE_PATH, readJson, writeJson } from "./config.js";
-import type { FeishuBridgeState, FeishuJobRoute, FeishuMessage, FeishuRoute } from "./types.js";
+import { BRIDGE_PATH, readJson, writeJson } from "./config.ts";
+import type { FeishuBridgeState, FeishuJobRoute, FeishuMessage, FeishuRoute } from "./types.ts";
 
 const DEFAULT_STATE: FeishuBridgeState = { version: 1, routes: {}, jobs: {}, sent: {} };
 

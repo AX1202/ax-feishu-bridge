@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { DEDUPE_PATH, ensureRoot } from "./config.js";
-import { debugLog } from "./debug.js";
+import { DEDUPE_PATH, ensureRoot } from "./config.ts";
+import { debugLog } from "./debug.ts";
 
 const MESSAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const LOCK_STALE_MS = 5000;

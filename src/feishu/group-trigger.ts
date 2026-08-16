@@ -1,4 +1,4 @@
-import { extractTextFromInteractiveCard } from "./interactive-card.js";
+import { extractTextFromInteractiveCard } from "./interactive-card.ts";
 
 export type GroupTriggerDecision = {
   accept: boolean;

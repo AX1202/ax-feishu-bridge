@@ -1,13 +1,20 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseGroupKeywords } from "./group-trigger.js";
-import { applyRuntimeOverrides, getRuntimeOverrides } from "./runtime-config.js";
-import type { CardActionMode, Domain, FeishuConfig, GroupPolicy } from "./types.js";
+import { parseGroupKeywords } from "./group-trigger.ts";
+import { applyRuntimeOverrides, getRuntimeOverrides } from "./runtime-config.ts";
+import type { CardActionMode, Domain, FeishuConfig, GroupPolicy } from "./types.ts";
 
 export const ROOT_DIR = join(homedir(), ".pi", "agent", "feishu");
 export const CONFIG_PATH = join(ROOT_DIR, "config.json");
-export const STATE_PATH = join(ROOT_DIR, "state.json");
+/**
+ * 每个 Agent Runtime 使用独立的状态文件，避免会话绑定互相覆盖：
+ * Pi 适配器用 state.pi.json；Harness 适配器用 state.harness.json。
+ */
+export const STATE_PI_PATH = join(ROOT_DIR, "state.pi.json");
+export const STATE_HARNESS_PATH = join(ROOT_DIR, "state.harness.json");
+/** @deprecated 兼容旧引用，等价于 STATE_PI_PATH */
+export const STATE_PATH = STATE_PI_PATH;
 export const DEBUG_LOG_PATH = join(ROOT_DIR, "debug.log");
 export const DAEMON_LOG_PATH = join(ROOT_DIR, "daemon.log");
 export const DEDUPE_PATH = join(ROOT_DIR, "dedupe.json");
@@ -75,6 +82,16 @@ export const DEFAULT_CONFIG: Pick<
 
 export function ensureRoot() {
   mkdirSync(ROOT_DIR, { recursive: true });
+  migrateLegacyStateFile();
+}
+
+/** 旧版本使用 state.json；首次运行新版本时把它改名为 state.pi.json，避免丢失会话绑定。 */
+function migrateLegacyStateFile() {
+  const legacyPath = join(ROOT_DIR, "state.json");
+  if (!existsSync(legacyPath) || existsSync(STATE_PI_PATH)) return;
+  try {
+    renameSync(legacyPath, STATE_PI_PATH);
+  } catch {}
 }
 
 export function readJson<T>(path: string, fallback: T): T {

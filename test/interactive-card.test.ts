@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractTextFromInteractiveCard, extractTextFromMsgType } from "../.pi/extensions/feishu/interactive-card.ts";
-import { parseMessageInput, buildPromptWithQuote } from "../.pi/extensions/feishu/messages.ts";
+import { extractTextFromInteractiveCard, extractTextFromMsgType } from "../src/feishu/interactive-card.ts";
+import { parseMessageInput, buildPromptWithQuote } from "../src/feishu/messages.ts";
 
 test("extracts header and div/markdown from schema 1.0 card", () => {
   const card = {

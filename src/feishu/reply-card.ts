@@ -9,17 +9,17 @@ import {
   buildReplyCard,
   defaultFinalNote,
   type ReplyCardStatus,
-} from "./card-builder.js";
-import { CardKitStream } from "./cardkit-stream.js";
-import { loadConfig } from "./config.js";
-import { debugLog } from "./debug.js";
+} from "./card-builder.ts";
+import { CardKitStream } from "./cardkit-stream.ts";
+import { loadConfig } from "./config.ts";
+import { debugLog } from "./debug.ts";
 
-export type { ReplyCardStatus } from "./card-builder.js";
+export type { ReplyCardStatus } from "./card-builder.ts";
 export {
   buildReplyCard,
   parseStopTaskActionValue,
   STOP_ACTION,
-} from "./card-builder.js";
+} from "./card-builder.ts";
 
 export type ReplyCardSink = {
   readonly runId: string;

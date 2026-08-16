@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildThinkingCard, parseThinkingActionValue } from "../.pi/extensions/feishu/cards.ts";
-import { getCommandList, parseBotCommand } from "../.pi/extensions/feishu/messages.ts";
-import { normalizeThinkingLevels } from "../.pi/extensions/feishu/thinking.ts";
+import { buildThinkingCard, parseThinkingActionValue } from "../src/feishu/cards.ts";
+import { getCommandList, parseBotCommand } from "../src/feishu/messages.ts";
+import { normalizeThinkingLevels } from "../src/feishu/thinking.ts";
 
 test("/thinking is recognized and documented", () => {
   assert.deepEqual(parseBotCommand(" /thinking "), { name: "thinking" });
@@ -14,7 +14,7 @@ test("thinking card displays Pi values exactly, including max", () => {
   const card = buildThinkingCard("p2p:user", { provider: "deepseek", id: "deepseek-v4-flash" }, {
     currentLevel: "max",
     availableLevels: levels,
-    source: "pi",
+    available: true,
   }) as any;
 
   assert.equal(card.header.title.content, "调整思考强度");
@@ -36,7 +36,7 @@ test("unknown future Pi values are preserved instead of filtered", () => {
   const card = buildThinkingCard("p2p:user", { provider: "example", id: "future-model" }, {
     currentLevel: "provider-ultra",
     availableLevels: levels,
-    source: "pi",
+    available: true,
   }) as any;
 
   const buttons = card.elements
@@ -65,7 +65,7 @@ test("unavailable Pi capability does not invent a fallback option", () => {
   const card = buildThinkingCard("p2p:user", { provider: "example", id: "legacy" }, {
     currentLevel: undefined,
     availableLevels: [],
-    source: "unavailable",
+    available: false,
   }) as any;
 
   assert.match(card.elements[0].content, /未显示任何猜测的选项/);

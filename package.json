@@ -1,10 +1,10 @@
 {
   "name": "pi-feishu-lark",
   "version": "0.3.1",
-  "description": "Feishu/Lark bridge for Pi coding agent — chat with Pi from Feishu or Lark",
+  "description": "Feishu/Lark bridge for coding agents — chat with Pi or DeepSeek Harness from Feishu or Lark",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package", "pi", "feishu", "lark", "extension"],
+  "keywords": ["pi-package", "pi", "dsh", "feishu", "lark", "extension"],
   "homepage": "https://github.com/AX1202/pi-feishu-lark#readme",
   "repository": {
     "type": "git",
@@ -19,15 +19,35 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
-    "typebox": "*"
+    "typebox": "*",
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-session-query": "^0.1.0-rc.6"
   },
   "devDependencies": {
     "typescript": "^5.9.2",
     "@types/node": "^24.3.0",
     "@types/qrcode-terminal": "^0.12.2"
   },
+  "exports": {
+    "./pi": "./src/adapters/pi/index.ts",
+    "./harness": "./src/adapters/harness/index.ts",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "files": [
+    "src",
+    ".pi",
+    "cordis.patch.yml"
+  ],
   "pi": {
     "extensions": ["./.pi/extensions/feishu/index.ts"]
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   },
   "scripts": {
     "check": "tsc --noEmit",

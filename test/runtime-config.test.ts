@@ -12,7 +12,7 @@ import {
   isRuntimeConfigKey,
   parseRuntimeConfigValue,
   setRuntimeConfig,
-} from "../.pi/extensions/feishu/runtime-config.ts";
+} from "../src/feishu/runtime-config.ts";
 function baseCfg(partial: Record<string, unknown> = {}) {
   return {
     appId: "cli_test",

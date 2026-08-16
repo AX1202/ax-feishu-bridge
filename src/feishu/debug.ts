@@ -1,5 +1,5 @@
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
-import { DEBUG_LOG_PATH, ensureRoot } from "./config.js";
+import { DEBUG_LOG_PATH, ensureRoot } from "./config.ts";
 
 const MAX_VALUE_LENGTH = 1200;
 const MAX_LOG_LINES = 1000;

@@ -59,6 +59,8 @@ export type FeishuConfig = {
 export type ModelSelection = {
   provider: string;
   id: string;
+  /** 思考强度档位（可选，Harness 适配器持久化用；Pi 存在会话内部）。 */
+  thinkingLevel?: string;
 };
 
 export type FeishuState = {

@@ -1,0 +1,10 @@
+# pi-feishu-lark 的 DeepSeek Harness 插件入口
+#
+# 本地开发（在仓库根目录运行）：
+#   dsh --profile web --patch ./cordis.patch.yml
+#
+# 作为 npm 包安装到 Harness 环境时，使用包名子路径（见 package.json 的 exports）：
+#   name: 'pi-feishu-lark/harness'
+- insert:
+    - id: feishu-harness
+      name: './src/adapters/harness/index.ts'

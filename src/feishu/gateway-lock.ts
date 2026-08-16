@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { debugLog } from "./debug.js";
+import { debugLog } from "./debug.ts";
 
 const LOCK_KEY = "pi-feishu-lark.feishu-gateway";
 const LOCKS_PATH = join(homedir(), ".pi", "agent", "locks.json");
@@ -29,8 +29,11 @@ export type GatewayLockResult =
 export class GatewayLockHandle {
   private heartbeat: NodeJS.Timeout | undefined;
   private onLost: (() => void | Promise<void>) | undefined;
+  readonly owner: GatewayOwner;
 
-  constructor(readonly owner: GatewayOwner) {}
+  constructor(owner: GatewayOwner) {
+    this.owner = owner;
+  }
 
   setOnLost(handler: () => void | Promise<void>) {
     this.onLost = handler;
