@@ -51,6 +51,6 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --experimental-strip-types --experimental-transform-types --import ./test/register.mjs --test tests/*.test.mjs test/*.test.ts"
+    "test": "node --experimental-strip-types --experimental-transform-types --import ./test/register.mjs --test test/*.test.mjs test/*.test.ts"
   }
 }

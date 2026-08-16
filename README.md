@@ -1,6 +1,6 @@
 # ax-feishu-bridge
 
-把 Pi 接入飞书/Lark 的消息桥接扩展：在熟悉的聊天界面里与本机 Pi 持续协作。
+支持 Deepseek Harness/Pi  接入 飞书/Lark 的消息桥接扩展：在熟悉的聊天界面里与本机 DSH/Pi 持续协作。
 
 <p align="center">
   <a href="#zh">中文</a> · <a href="#en">English</a>
@@ -83,6 +83,9 @@ pi install git:github.com/AX1202/ax-feishu-bridge
 - 私聊：直接发消息
 - 群聊：根据群聊策略决定是否需要 `@` 机器人
 - 话题：每个话题会独立对应一个 Pi 会话
+
+**群聊策略设为open后，想要不@机器人就能回复任何群内消息，还需要到飞书开发者后台 - 对应机器人事件与回调 - 打开“获取群组中所有消息”或“获取群组中用户和机器人发送的消息”这两个任意一个权限。**
+
 
 ---
 

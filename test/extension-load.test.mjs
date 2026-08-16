@@ -10,8 +10,8 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const codingAgentEntry = fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent"));
 const piCli = join(dirname(codingAgentEntry), "cli.js");
 const extensionPath = join(repoRoot, ".pi/extensions/feishu/index.ts");
-const modelRuntimeExtensionPath = join(repoRoot, "tests/fixtures/model-runtime-extension.ts");
-const settleExtensionPath = join(repoRoot, "tests/fixtures/settle-extension.ts");
+const modelRuntimeExtensionPath = join(repoRoot, "test/fixtures/model-runtime-extension.ts");
+const settleExtensionPath = join(repoRoot, "test/fixtures/settle-extension.ts");
 
 function runFeishuCommand(command, extraExtensions = [], setup) {
   const homeDir = mkdtempSync(join(tmpdir(), "ax-feishu-bridge-test-"));
