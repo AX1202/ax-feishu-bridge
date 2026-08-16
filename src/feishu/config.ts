@@ -2,10 +2,19 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync, 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseGroupKeywords } from "./group-trigger.ts";
-import { applyRuntimeOverrides, getRuntimeOverrides } from "./runtime-config.ts";
+import { applyRuntimeOverrides, getRuntimeOverrides, setRuntimeOverridesPath } from "./runtime-config.ts";
 import type { CardActionMode, Domain, FeishuConfig, GroupPolicy } from "./types.ts";
 
 export const ROOT_DIR = join(homedir(), ".pi", "agent", "feishu");
+
+/** dsh 的家目录：优先 DSH_HOME 环境变量，否则 ~/.dsh */
+export function dshHome(): string {
+  const fromEnv = process.env.DSH_HOME?.trim();
+  return fromEnv || join(homedir(), ".dsh");
+}
+
+/** Harness 数据目录：住在 dsh 自己的家目录下，不占用 ~/.pi */
+export const HARNESS_ROOT = join(dshHome(), "feishu");
 
 // ---------- Pi 适配器专用路径 ----------
 export const CONFIG_PI_PATH = join(ROOT_DIR, "config.pi.json");
@@ -16,11 +25,11 @@ export const DEBUG_PI_LOG_PATH = join(ROOT_DIR, "debug.pi.log");
 export const DAEMON_LOG_PATH = join(ROOT_DIR, "daemon.log");
 
 // ---------- Harness 适配器专用路径 ----------
-export const CONFIG_HARNESS_PATH = join(ROOT_DIR, "config.harness.json");
-export const STATE_HARNESS_PATH = join(ROOT_DIR, "state.harness.json");
-export const BRIDGE_HARNESS_PATH = join(ROOT_DIR, "bridge.harness.json");
-export const DEDUPE_HARNESS_PATH = join(ROOT_DIR, "dedupe.harness.json");
-export const DEBUG_HARNESS_LOG_PATH = join(ROOT_DIR, "debug.harness.log");
+export const CONFIG_HARNESS_PATH = join(HARNESS_ROOT, "config.harness.json");
+export const STATE_HARNESS_PATH = join(HARNESS_ROOT, "state.harness.json");
+export const BRIDGE_HARNESS_PATH = join(HARNESS_ROOT, "bridge.harness.json");
+export const DEDUPE_HARNESS_PATH = join(HARNESS_ROOT, "dedupe.harness.json");
+export const DEBUG_HARNESS_LOG_PATH = join(HARNESS_ROOT, "debug.harness.log");
 
 // ---------- 兼容旧引用（等价于 Pi 版） ----------
 export const CONFIG_PATH = CONFIG_PI_PATH;
@@ -72,6 +81,8 @@ let currentSource: RuntimeSource = PI_SOURCE;
 
 export function setRuntimeSource(source: RuntimeSource) {
   currentSource = source;
+  // 运行时热更新配置跟随各自平台：Pi 住 ~/.pi，Harness 住 dsh 家目录
+  setRuntimeOverridesPath(source.id === "harness" ? join(HARNESS_ROOT, "runtime-overrides.json") : join(ROOT_DIR, "runtime-overrides.json"));
 }
 
 export function getRuntimeSource(): RuntimeSource {
@@ -143,6 +154,10 @@ export const DEFAULT_CONFIG: Pick<
 };
 
 export function ensureRoot() {
+  if (getRuntimeSource().id === "harness") {
+    mkdirSync(HARNESS_ROOT, { recursive: true });
+    return;
+  }
   mkdirSync(ROOT_DIR, { recursive: true });
   migrateLegacyFiles();
 }

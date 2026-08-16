@@ -58,11 +58,6 @@ B站：<https://space.bilibili.com/4489397>
 dsh plugin --profile demo add ax-feishu-bridge
 ```
 
-也可以从 Git 安装：
-
-```bash
-dsh plugin --profile demo add github:AX1202/ax-feishu-bridge
-```
 
 > **首次安装可能遇到构建授权报错**（提示 `Ignored build scripts: protobufjs`）：这是飞书官方 SDK 的一个依赖，pnpm 新版出于安全默认拦截它的安装脚本，属于正常现象，只需授权一次。步骤：
 >
@@ -82,7 +77,7 @@ dsh --profile demo
 
 配置完成后桥接会自动启动并连上飞书/Lark，之后每次启动 dsh 也会自动连接。如果不想自动连接，把配置里的 `autoStart` 设为 `false` 即可。
 
-> DSH 使用独立的配置文件 `~/.pi/agent/feishu/config.harness.json`，与 Pi 的配置互不干扰，两边可以同时安装、共存。
+> DSH 使用独立的配置文件 `~/.dsh/feishu/config.harness.json`（存放在 dsh 自己的家目录下），与 Pi 的配置互不干扰，两边可以同时安装、共存。
 
 #### 3. 在飞书里互动
 
@@ -341,7 +336,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 
 ### 运行时配置
 
-以下桥接设置可以在**与机器人的私聊**里用 `/config` 立即修改，无需重启，并保存到 `~/.pi/agent/feishu/runtime-overrides.json`：
+以下桥接设置可以在**与机器人的私聊**里用 `/config` 立即修改，无需重启，并保存到各自平台数据目录下的 `runtime-overrides.json`（Pi 为 `~/.pi/agent/feishu/`，DSH 为 `~/.dsh/feishu/`）：
 
 ```text
 /config
@@ -367,6 +362,9 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `~/.pi/agent/feishu/debug.log`   | 调试日志              |
 | `~/.pi/agent/locks.json`         | 当前飞书连接的 owner 锁   |
 | `~/.pi/agent/sessions/`          | 每个飞书会话对应的 Pi 会话文件 |
+| `~/.dsh/feishu/`                 | DSH 侧的配置、状态与日志（仅安装 DSH 时产生；未装 Pi 的机器不会创建 `~/.pi`） |
+
+> 连接锁选址：机器上装有 Pi（存在 `~/.pi/agent` 目录）时沿用 `~/.pi/agent/locks.json`，保证两边能协商同一个机器人的连接；纯 DSH 环境则使用 `~/.dsh/locks.json`。
 
 ***
 

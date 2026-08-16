@@ -5,7 +5,7 @@ import { debugLog } from "./debug.ts";
 
 /** 兼容旧版锁（未按 appId 区分时的固定 key）。 */
 const LEGACY_LOCK_KEY = "pi-feishu-lark.feishu-gateway";
-const LOCKS_PATH = join(homedir(), ".pi", "agent", "locks.json");
+const PI_AGENT_DIR = join(homedir(), ".pi", "agent");
 const LOCK_STALE_MS = 30_000;
 const LOCK_RETRY_MS = 25;
 const LOCK_ATTEMPTS = 40;
@@ -18,6 +18,19 @@ const HEARTBEAT_MS = 5_000;
 function lockKeyFor(appId: string | undefined) {
   return appId ? `ax-feishu-bridge.gateway.${appId}` : LEGACY_LOCK_KEY;
 }
+
+/**
+ * 锁文件选址：机器上有 Pi 数据目录时沿用老位置，保证 Pi 与 Harness
+ * 仍能互相协商同一个机器人的连接；纯 dsh 环境放进 dsh 家目录，
+ * 不再凭空创建 ~/.pi。
+ */
+function resolveLocksPath(): string {
+  if (existsSync(PI_AGENT_DIR)) return join(PI_AGENT_DIR, "locks.json");
+  const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), ".dsh");
+  return join(dshHome, "locks.json");
+}
+
+const LOCKS_PATH = resolveLocksPath();
 
 export type GatewayOwner = {
   key: string;

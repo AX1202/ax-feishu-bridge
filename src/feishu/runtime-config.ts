@@ -39,6 +39,17 @@ export type RuntimeOverrides = Partial<Pick<RuntimeConfigView, RuntimeConfigKey>
 const FEISHU_ROOT = join(homedir(), ".pi", "agent", "feishu");
 export const RUNTIME_OVERRIDES_PATH = join(FEISHU_ROOT, "runtime-overrides.json");
 
+/** 当前 runtime 的 overrides 落盘路径；默认 Pi，由 setRuntimeOverridesPath 切换 */
+let currentOverridesPath = RUNTIME_OVERRIDES_PATH;
+
+export function setRuntimeOverridesPath(path: string) {
+  currentOverridesPath = path;
+}
+
+export function runtimeOverridesPath(): string {
+  return currentOverridesPath;
+}
+
 export function isRuntimeConfigKey(key: string): key is RuntimeConfigKey {
   return (RUNTIME_CONFIG_KEYS as readonly string[]).includes(key);
 }
@@ -137,7 +148,7 @@ export function applyRuntimeOverrides<T extends RuntimeConfigView>(
   return next;
 }
 
-export function getRuntimeOverrides(path: string = RUNTIME_OVERRIDES_PATH): RuntimeOverrides {
+export function getRuntimeOverrides(path: string = runtimeOverridesPath()): RuntimeOverrides {
   const raw = readOverridesFile(path);
   const out: RuntimeOverrides = {};
   for (const key of RUNTIME_CONFIG_KEYS) {
@@ -164,10 +175,7 @@ export function setRuntimeConfig(
 ): SetRuntimeResult {
   const parsed = parseRuntimeConfigValue(key, rawValue);
   if (parsed.ok === false) return { ok: false, error: parsed.error };
-  const path = options?.path ?? RUNTIME_OVERRIDES_PATH;
-  if (path === RUNTIME_OVERRIDES_PATH) {
-    mkdirSync(FEISHU_ROOT, { recursive: true });
-  }
+  const path = options?.path ?? runtimeOverridesPath();
   const current = getRuntimeOverrides(path);
   const next: RuntimeOverrides = {
     ...current,
@@ -179,11 +187,8 @@ export function setRuntimeConfig(
 
 export function clearRuntimeOverrides(
   keyOrAll: RuntimeConfigKey | "all" | string,
-  path: string = RUNTIME_OVERRIDES_PATH,
+  path: string = runtimeOverridesPath(),
 ): { ok: true; overrides: RuntimeOverrides } | { ok: false; error: string } {
-  if (path === RUNTIME_OVERRIDES_PATH) {
-    mkdirSync(FEISHU_ROOT, { recursive: true });
-  }
   if (keyOrAll === "all") {
     writeOverridesFile(path, {});
     return { ok: true, overrides: {} };
