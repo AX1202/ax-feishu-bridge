@@ -135,7 +135,7 @@ export class HarnessConversationRuntime implements ConversationRuntime {
       if (run.stopped) return;
       const answer = summarizeAssistantText(agent.session.events, firstSeq);
       debugLog("feishu.harness.prompt.done", { key, answerLength: answer.length });
-      await onReply(answer || "No response.");
+      await onReply(answer || "本轮处理已完成，但没有生成最终回答文本。可以再问一次试试。");
       // onReply（ReplyCard.completeWithAnswer）已切到 done；此处仅兜底
       await status?.finish("done");
     }).catch(async (error) => {
@@ -485,31 +485,85 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     let handle: AgentHandle;
     if (existingSessionId) {
       debugLog("feishu.harness.agent_resume", { key, sessionId: existingSessionId });
-      handle = await this.ctx.agents.resume({
-        resumeSessionId: SessionId(existingSessionId),
-        agentOptions,
-        setup: (agentCtx) => {
-          installModelSelection(agentCtx, selectionRef);
-        },
-      });
+      try {
+        handle = await this.ctx.agents.resume({
+          resumeSessionId: SessionId(existingSessionId),
+          agentOptions,
+          setup: (agentCtx) => {
+            installModelSelection(agentCtx, selectionRef);
+          },
+        });
+      } catch (error) {
+        // 该会话可能已被其他入口占用（如在 Harness 网页里打开过，会话在宿主里处于 live），
+        // 或持久化记录损坏导致无法恢复：回退为新建会话，保证飞书对话不被卡死。
+        debugLog("feishu.harness.agent_resume_failed", {
+          key,
+          sessionId: existingSessionId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        handle = await this.createAgentHandle(workspaceCwd, agentOptions, selectionRef);
+      }
     } else {
-      debugLog("feishu.harness.agent_create", { key, cwd: workspaceCwd });
-      handle = await this.ctx.agents.create({
-        sessionId: SessionId(`feishu-${randomUUID()}`),
-        meta: { cwd: workspaceCwd },
-        agentOptions,
-        setup: (agentCtx) => {
-          installModelSelection(agentCtx, selectionRef);
-        },
-      });
-      this.state.sessions[key] = String(handle.agent.id);
-      writeJson(STATE_HARNESS_PATH, this.state);
+      handle = await this.createAgentHandle(workspaceCwd, agentOptions, selectionRef);
     }
+    this.state.sessions[key] = String(handle.agent.id);
+    writeJson(STATE_HARNESS_PATH, this.state);
 
     this.selectionRefs.set(key, selectionRef);
     this.agents.set(key, handle);
     this.bridge?.attachSession(key, handle.agent.id);
+    await this.attachToWorkspace(String(handle.agent.id), workspaceCwd);
     return handle;
+  }
+
+  /**
+   * 把会话登记到对应的 Harness 工作区，网页侧栏才会按工作区分组显示
+   * （否则一律落在“未分组”：宿主只在首次启动时自动归档历史，
+   * 之后创建的会话必须显式 attach）。工作区服务是宿主侧可选能力，
+   * 不存在或登记失败只记日志，不影响对话；目录尚未注册时自动注册。
+   */
+  private async attachToWorkspace(sessionId: string, workspaceCwd: string) {
+    const registry = this.getWorkspaceRegistry();
+    if (!registry) return;
+    try {
+      let workspace = await registry.resolveByPath(workspaceCwd);
+      if (!workspace) workspace = await registry.create(workspaceCwd);
+      await workspace.attachSession(SessionId(sessionId));
+      debugLog("feishu.harness.workspace_attached", { sessionId, workspace: workspace.path });
+    } catch (error) {
+      debugLog("feishu.harness.workspace_attach_failed", {
+        sessionId,
+        cwd: workspaceCwd,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  /** 可选服务：宿主没装 workspace 能力时返回 undefined。 */
+  private getWorkspaceRegistry(): any {
+    const ctx = this.ctx as any;
+    try {
+      return typeof ctx.get === "function" ? ctx.get("workspaceRegistry") : ctx.workspaceRegistry;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 新建一个飞书会话对应的 agent（随机 sessionId，历史不落旧账）。 */
+  private async createAgentHandle(
+    workspaceCwd: string,
+    agentOptions: { provider: string; model: string } | undefined,
+    selectionRef: ModelSelectionRef,
+  ): Promise<AgentHandle> {
+    debugLog("feishu.harness.agent_create", { cwd: workspaceCwd });
+    return this.ctx.agents.create({
+      sessionId: SessionId(`feishu-${randomUUID()}`),
+      meta: { cwd: workspaceCwd },
+      agentOptions,
+      setup: (agentCtx) => {
+        installModelSelection(agentCtx, selectionRef);
+      },
+    });
   }
 
   private async disposeAgent(key: string) {
@@ -526,16 +580,10 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     for (const run of this.activeRuns.values()) {
       if (run.agent.session !== session) continue;
       run.status?.updateFromEvent(event);
-      if (event.type === "assistant/chunk" && !run.stopped) {
-        const chunk = event.data.chunk;
-        if (chunk.type === "text-delta" && chunk.text) {
-          const delta = chunk.text;
-          if (run.onDelta) run.onDelta(delta);
-          else if (run.status && typeof (run.status as any).append === "function") {
-            (run.status as any).append(delta);
-          }
-        }
-      }
+      // 稳妥策略：不流式推送模型的中间输出。
+      // 模型的 text-delta 里可能混着工具调用指令（DSML 标记）等内部草稿，
+      // 直接推给用户会看到"工作草稿"而非回答。
+      // 因此只在整轮结束后，从事件日志里提取最终面向用户的回答再发送。
       return;
     }
   }
@@ -656,20 +704,30 @@ function toRuntimeModel(model: any): RuntimeModel {
   };
 }
 
-/** 从事件日志提取 firstSeq 之后最后一条 assistant 文本（headless runner 的 summarize 逻辑）。 */
-function summarizeAssistantText(events: readonly SessionEvent[], firstSeq: number): string {
-  let text = "";
-  for (const event of events) {
-    if (event.seq < firstSeq) continue;
-    if (event.type === "assistant/message") {
-      const joined = event.data.message.content
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("");
-      if (joined !== "") text = joined;
-    }
+/** 模型工具调用指令的标记（DSML）：带这种内容的消息是"内部草稿"，不是给用户的回答。 */
+const DSML_MARKER = "<｜｜DSML｜｜";
+
+export function isToolCallText(text: string): boolean {
+  return text.includes(DSML_MARKER);
+}
+
+/**
+ * 从事件日志提取本轮最后一条"面向用户"的助手回答：
+ * 从后往前找，跳过工具调用指令等中间过程消息。
+ */
+export function summarizeAssistantText(events: readonly SessionEvent[], firstSeq: number): string {
+  for (let i = events.length - 1; i >= 0; i -= 1) {
+    const event = events[i]!;
+    if (event.seq < firstSeq) break;
+    if (event.type !== "assistant/message") continue;
+    const joined = event.data.message.content
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("")
+      .trim();
+    if (joined !== "" && !isToolCallText(joined)) return joined;
   }
-  return text;
+  return "";
 }
 
 function summarizeFirstMessage(text: string) {

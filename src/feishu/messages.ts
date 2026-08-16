@@ -36,7 +36,8 @@ export function conversationKey(msg: FeishuMessage) {
 }
 
 export function conversationLabel(msg: FeishuMessage) {
-  if (msg.chatType === "p2p") return "[飞书私聊]";
+  // 私聊不加标签：一对一会话本身没有语境歧义，加了只会造成与网页直输消息的文本差异
+  if (msg.chatType === "p2p") return "";
   if (msg.rootId || msg.parentId || msg.threadId || msg.chatMode === "topic") return "[飞书话题]";
   return "[飞书群聊]";
 }

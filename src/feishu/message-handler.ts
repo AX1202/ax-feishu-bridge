@@ -431,7 +431,8 @@ function buildPrompt(
   }
 
   const promptBody = contentParts.join("\n\n").trim();
-  return `${conversationLabel(msg)} ${promptBody}`;
+  const label = conversationLabel(msg);
+  return label ? `${label} ${promptBody}` : promptBody;
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, timeoutMessage: string): Promise<T> {

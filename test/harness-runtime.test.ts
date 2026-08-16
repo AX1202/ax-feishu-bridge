@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { HarnessConversationRuntime } from "../src/adapters/harness/HarnessConversationRuntime.ts";
+import { HarnessConversationRuntime, isToolCallText, summarizeAssistantText } from "../src/adapters/harness/HarnessConversationRuntime.ts";
+import { readJson, STATE_HARNESS_PATH, writeJson } from "../src/feishu/config.ts";
 
 function createMockCtx() {
   const listeners: Array<[string, (...args: any[]) => void]> = [];
@@ -157,6 +158,120 @@ test("harness runtime: listResumeSessions reads from sessionQuery", async () => 
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;
     rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: summarize skips DSML tool-call drafts and returns the final answer", () => {
+  const events: any[] = [
+    { seq: 0, type: "user/message", data: { content: [{ type: "text", text: "你好" }] } },
+    { seq: 1, type: "assistant/message", data: { message: { content: [{ type: "text", text: "<｜｜DSML｜｜tool_calls><｜｜DSML｜｜invoke name=\"ls\"/></｜｜DSML｜｜tool_calls>" }] } } },
+    { seq: 2, type: "assistant/message", data: { message: { content: [{ type: "text", text: "你好！有什么可以帮你的？" }] } } },
+  ];
+  assert.equal(summarizeAssistantText(events, 0), "你好！有什么可以帮你的？");
+
+  // 只有工具调用草稿时应返回空（交给上层显示友好提示）
+  const onlyToolCall: any[] = [
+    { seq: 0, type: "assistant/message", data: { message: { content: [{ type: "text", text: "<｜｜DSML｜｜tool_calls>x" }] } } },
+  ];
+  assert.equal(summarizeAssistantText(onlyToolCall, 0), "");
+  assert.equal(isToolCallText("<｜｜DSML｜｜tool_calls>"), true);
+  assert.equal(isToolCallText("普通回答"), false);
+});
+
+test("harness runtime: resume failure (session live elsewhere) falls back to a new session", async () => {
+  const { ctx } = createMockCtx();
+  // 宿主报：旧会话已被其他入口占用（live），无法 resume
+  ctx.agents.resume = async () => {
+    throw new Error('cannot prepare session "feishu-live-session" while it is live');
+  };
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-resume-fallback";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    // 模拟重启前遗留的会话绑定（状态文件路径在导入时固定为真实 HOME，故直接改内存状态）
+    (runtime as any).state.sessions[key] = "feishu-live-session";
+    const handle = await (runtime as any).getAgent(key);
+    // 回退新建：不是旧 id，且仍是 feishu- 前缀会话
+    assert.notEqual(String(handle.agent.id), "feishu-live-session");
+    assert.match(String(handle.agent.id), /^feishu-/);
+    // 状态已改绑到新会话，下一条消息不会再撞旧会话
+    assert.equal((runtime as any).state.sessions[key], String(handle.agent.id));
+    await runtime.dispose();
+  } finally {
+    // 清理：移除测试写入真实状态文件的绑定
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: new session is attached to its workspace (auto-creating it)", async () => {
+  const { ctx } = createMockCtx();
+  const created: string[] = [];
+  const attached: string[] = [];
+  const registry = {
+    resolveByPath: async () => undefined,
+    create: async (p: string) => {
+      created.push(p);
+      return {
+        path: p,
+        title: "auto",
+        attachSession: async (id: string) => { attached.push(String(id)); },
+      };
+    },
+  };
+  ctx.get = (name: string) => (name === "workspaceRegistry" ? registry : undefined);
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-workspace-create";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    const handle = await (runtime as any).getAgent(key);
+    // 目录未注册 → 自动创建工作区并把新会话登记进去
+    assert.deepEqual(created, [ws]);
+    assert.deepEqual(attached, [String(handle.agent.id)]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: session attaches to an existing workspace without creating one", async () => {
+  const { ctx } = createMockCtx();
+  let createCalled = false;
+  const attached: string[] = [];
+  const existing = {
+    path: "/tmp/ws",
+    title: "existing",
+    attachSession: async (id: string) => { attached.push(String(id)); },
+  };
+  const registry = {
+    resolveByPath: async () => existing,
+    create: async () => { createCalled = true; return existing; },
+  };
+  ctx.get = (name: string) => (name === "workspaceRegistry" ? registry : undefined);
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-workspace-existing";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    const handle = await (runtime as any).getAgent(key);
+    assert.equal(createCalled, false);
+    assert.deepEqual(attached, [String(handle.agent.id)]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
   }
 });
 
