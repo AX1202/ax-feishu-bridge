@@ -52,25 +52,26 @@ B站：<https://space.bilibili.com/4489397>
 
 前提：本机已安装 dsh
 
-从 npm 安装（`demo` 是组合配置 profile 的名字，可以随意取，首次使用会自动初始化）：
+从 npm 安装（`ax-feishu` 是组合配置 profile 的名字，可以随意取，首次使用会自动初始化）：
 
 ```bash
-dsh plugin --profile demo add ax-feishu-bridge
+dsh plugin --profile ax-feishu add ax-feishu-bridge --ignore-scripts
 ```
 
-
-> **首次安装可能遇到构建授权报错**（提示 `Ignored build scripts: protobufjs`）：这是飞书官方 SDK 的一个依赖，pnpm 新版出于安全默认拦截它的安装脚本，属于正常现象，只需授权一次。步骤：
+> 末尾的 `--ignore-scripts` 建议带上：飞书官方 SDK 附带的一个依赖（protobufjs）想在安装时运行一个只打印提示信息的无用脚本，pnpm 新版默认拦截它并报错；加这个参数直接跳过，功能不受任何影响。
 >
-> 1. 运行：`dsh plugin --profile demo approve-builds`
+> **如果你没加这个参数、已经撞上了授权报错**（提示 `Ignored build scripts: protobufjs`），按下面步骤授权一次即可，只需一次：
+>
+> 1. 运行：`dsh plugin --profile ax-feishu approve-builds`
 > 2. 在出现的列表里按空格选中 `protobufjs`，回车，再输入 `y` 确认
-> 3. 重新运行上面的安装命令
+> 3. 重新运行安装命令
 >
-> 这里的 `demo` 就是你安装时用的那个名字：如果你安装时换了别的名字（或装进已有的 profile，如 `web`），这里同样换成对应的名字即可。该脚本只打印一条提示信息，不执行其他操作。如果选择从 Git 安装，列表中还需要同样选中 `ax-feishu-bridge`（用于安装时编译源码）。
+> 这里的 `ax-feishu` 就是你安装时用的那个名字：如果你安装时换了别的名字（或装进已有的 profile，如 `web`），以上命令同样换成对应的名字即可。
 
 #### 2. 启动与首次配置
 
 ```bash
-dsh --profile demo
+dsh --profile ax-feishu
 ```
 
 首次启动时，如果没有检测到飞书机器人配置，会自动进入终端配置向导：推荐选择“扫码自动创建飞书助手”，按提示扫描终端里的二维码即可；如果你已经有现成的飞书/Lark 应用，也可以选择手动填写 App ID 和 App Secret。
@@ -80,8 +81,6 @@ dsh --profile demo
 > DSH 使用独立的配置文件 `~/.dsh/feishu/config.harness.json`（存放在 dsh 自己的家目录下），与 Pi 的配置互不干扰，两边可以同时安装、共存。
 
 #### 3. 在飞书里互动
-
-和 Pi 完全一样：
 
 - 私聊：直接发消息
 - 群聊：根据群聊策略决定是否需要 `@` 机器人
@@ -94,7 +93,7 @@ dsh --profile demo
 
 两点区别需要注意：
 
-- DSH 没有 `/feishu` 管理命令，桥接随 dsh 自动启停，由配置里的 `autoStart` 控制
+- DSH 的 `/feishu` 管理命令是精简版：提供 `setup / status / autostart / debug / reset`，没有 `start / stop / restart`——桥接随 dsh 自动启停，由配置里的 `autoStart` 控制，手动启停请用 DSH web UI 的插件开关（或重启 dsh）。详见下文“DSH 里怎么管理”
 - DSH 的环境变量前缀是 `HARNESS_`（例如 `HARNESS_APP_ID`），而不是 Pi 的 `FEISHU_`
 
 <a id="pi-quick-start"></a>
@@ -282,6 +281,24 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `/feishu autostart` | 开关自动启动              |
 | `/feishu debug`     | 查看最近 20 条调试日志       |
 | `/feishu reset`     | 清除配置和映射，但保留会话历史     |
+
+***
+
+## DSH 里怎么管理
+
+在 DSH 的 web 输入框或终端里输入（依赖宿主 DSH 的命令能力；宿主未提供时会静默跳过，不影响桥接本身）：
+
+| 命令                     | 作用                                          |
+| ---------------------- | ------------------------------------------- |
+| `/feishu setup`        | 重新配置机器人；问答与二维码在 DSH 进程所在终端进行，已有配置时先确认覆盖 |
+| `/feishu status`       | 查看连接状态、当前 owner 和配置                  |
+| `/feishu autostart`    | 开关自动启动                                 |
+| `/feishu debug`        | 查看最近 20 条调试日志                        |
+| `/feishu reset confirm` | 清除配置和映射，但保留会话历史                    |
+
+与 Pi 的区别：DSH 不提供 `/feishu start | stop | restart`——桥接随 dsh 自动启停，手动启停请用 DSH web UI 的插件开关（或重启 dsh）。`setup` / `reset` 之后把插件开关关再开一次（或重启 dsh），新配置即可生效。
+
+> 注意（DSH 平台限制）：命令结果以可折叠的命令节点显示在对话流里，但**空白的全新会话不渲染命令记录**——如果敲了命令没看到任何反应，先在该会话里发一条普通消息，再执行命令即可。`setup` 不受影响（问答与二维码在终端）。
 
 ***
 

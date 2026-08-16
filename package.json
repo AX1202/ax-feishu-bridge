@@ -1,13 +1,20 @@
 {
   "name": "ax-feishu-bridge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Feishu/Lark bridge for coding agents — chat with Pi or DeepSeek Harness from Feishu or Lark",
   "type": "module",
   "license": "MIT",
   "engines": {
     "node": "^22.19.0 || >=24.0.0"
   },
-  "keywords": ["pi-package", "pi", "dsh", "feishu", "lark", "extension"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "dsh",
+    "feishu",
+    "lark",
+    "extension"
+  ],
   "homepage": "https://github.com/AX1202/ax-feishu-bridge#readme",
   "repository": {
     "type": "git",
@@ -49,7 +56,9 @@
     "cordis.patch.yml"
   ],
   "pi": {
-    "extensions": ["./.pi/extensions/feishu/index.ts"]
+    "extensions": [
+      "./.pi/extensions/feishu/index.ts"
+    ]
   },
   "dsh": {
     "bundle": {

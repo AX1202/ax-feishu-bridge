@@ -3,7 +3,7 @@
  * 与 Pi 的 /feishu setup 问同样的问题；写 Harness 自己的 config.harness.json，
  * 与 Pi 的配置完全独立。
  */
-import { CONFIG_HARNESS_PATH, DEFAULT_CONFIG, ensureRoot, mask, writeJson } from "../../feishu/config.ts";
+import { CONFIG_HARNESS_PATH, DEFAULT_CONFIG, ensureRoot, loadConfig, mask, writeJson } from "../../feishu/config.ts";
 import { registerFeishuApp } from "../../feishu/app-register.ts";
 import type { Domain, FeishuConfig, GroupPolicy } from "../../feishu/types.ts";
 
@@ -17,7 +17,7 @@ function createPrompter() {
   const queue: Array<(line: string) => void> = [];
   process.stdin.setEncoding("utf8");
   process.stdin.resume();
-  process.stdin.on("data", (chunk: string) => {
+  const onData = (chunk: string) => {
     buffer += chunk;
     let newlineIndex = buffer.indexOf("\n");
     while (newlineIndex >= 0) {
@@ -29,7 +29,8 @@ function createPrompter() {
       else pendingLines.push(line);
       newlineIndex = buffer.indexOf("\n");
     }
-  });
+  };
+  process.stdin.on("data", onData);
   return {
     question(prompt: string): Promise<string> {
       process.stdout.write(prompt);
@@ -38,6 +39,10 @@ function createPrompter() {
         if (cached !== undefined) resolve(cached);
         else queue.push(resolve);
       });
+    },
+    /** 移除 stdin 监听：向导可被 /feishu setup 反复触发，不关闭会叠加多个监听器互相抢输入 */
+    close() {
+      process.stdin.removeListener("data", onData);
     },
   };
 }
@@ -72,70 +77,87 @@ function select<T extends string>(
 
 /**
  * 运行配置向导。成功返回配置（已落盘 config.json），用户中途退出返回 undefined。
+ * confirmOverwrite：已有配置时先确认（/feishu setup 重新配置场景），默认不询问（首次启动场景）。
  */
-export async function runHarnessSetup(): Promise<FeishuConfig | undefined> {
+export async function runHarnessSetup(options?: { confirmOverwrite?: boolean }): Promise<FeishuConfig | undefined> {
   ensureRoot();
   const prompter = createPrompter();
-  console.log("=== 飞书 / Lark 机器人配置向导 / Setup wizard ===");
-  const mode = await select(
-    prompter,
-    "配置方式 / Setup method",
-    [
-      { value: "auto", label: "扫码自动创建飞书助手 / Create by QR code" },
-      { value: "manual", label: "手动填写已有应用 / Configure existing app" },
-    ],
-    "auto",
-  );
-
-  let appId = "";
-  let appSecret = "";
-  let domain: Domain = "feishu";
-
-  if (mode === "auto") {
-    console.log();
-    const created = await registerFeishuApp();
-    appId = created.appId;
-    appSecret = created.appSecret;
-    domain = created.domain;
-  } else {
-    domain = await select(
+  try {
+    if (options?.confirmOverwrite) {
+      const existing = loadConfig();
+      if (existing) {
+        const answer = (await prompter.question(
+          `检测到已有配置（App ID: ${mask(existing.appId)}）。覆盖将替换当前机器人，继续？(y/N): `,
+        )).trim().toLowerCase();
+        if (answer !== "y" && answer !== "yes") {
+          console.log("已取消，现有配置未改动。 / Cancelled; existing config unchanged.");
+          return undefined;
+        }
+      }
+    }
+    console.log("=== 飞书 / Lark 机器人配置向导 / Setup wizard ===");
+    const mode = await select(
       prompter,
-      "应用区域 / App region",
+      "配置方式 / Setup method",
       [
-        { value: "feishu", label: "Feishu 中国 / Feishu China" },
-        { value: "lark", label: "Lark 国际 / Lark Global" },
+        { value: "auto", label: "扫码自动创建飞书助手 / Create by QR code" },
+        { value: "manual", label: "手动填写已有应用 / Configure existing app" },
       ],
-      "feishu",
+      "auto",
     );
-    appId = (await prompter.question("App ID / 应用 ID: ")).trim();
-    appSecret = (await prompter.question("App Secret / 应用密钥: ")).trim();
+
+    let appId = "";
+    let appSecret = "";
+    let domain: Domain = "feishu";
+
+    if (mode === "auto") {
+      console.log();
+      const created = await registerFeishuApp();
+      appId = created.appId;
+      appSecret = created.appSecret;
+      domain = created.domain;
+    } else {
+      domain = await select(
+        prompter,
+        "应用区域 / App region",
+        [
+          { value: "feishu", label: "Feishu 中国 / Feishu China" },
+          { value: "lark", label: "Lark 国际 / Lark Global" },
+        ],
+        "feishu",
+      );
+      appId = (await prompter.question("App ID / 应用 ID: ")).trim();
+      appSecret = (await prompter.question("App Secret / 应用密钥: ")).trim();
+    }
+
+    if (!appId || !appSecret) {
+      console.log("App ID 和 App Secret 不能为空，配置未保存。 / App ID and App Secret are required; config not saved.");
+      return undefined;
+    }
+
+    const groupPolicy = await select<GroupPolicy>(
+      prompter,
+      "群聊策略 / Group policy",
+      [
+        { value: "open", label: "open：不需要 @，群/话题消息自动回复 / auto reply without @ in groups/topics" },
+        { value: "mention", label: "mention：只有 @ 机器人才回复 / reply only when mentioned" },
+      ],
+      "open",
+    );
+
+    const config: FeishuConfig = {
+      appId,
+      appSecret,
+      domain,
+      groupPolicy,
+      language: "zh",
+      reactEmoji: DEFAULT_CONFIG.reactEmoji,
+      autoStart: true,
+    };
+    writeJson(CONFIG_HARNESS_PATH, config);
+    console.log(`\n飞书配置已保存 / Feishu config saved\nPath: ${CONFIG_HARNESS_PATH}\nApp ID: ${mask(appId)}\n群聊策略 / Group policy: ${groupPolicy}`);
+    return config;
+  } finally {
+    prompter.close();
   }
-
-  if (!appId || !appSecret) {
-    console.log("App ID 和 App Secret 不能为空，配置未保存。 / App ID and App Secret are required; config not saved.");
-    return undefined;
-  }
-
-  const groupPolicy = await select<GroupPolicy>(
-    prompter,
-    "群聊策略 / Group policy",
-    [
-      { value: "open", label: "open：不需要 @，群/话题消息自动回复 / auto reply without @ in groups/topics" },
-      { value: "mention", label: "mention：只有 @ 机器人才回复 / reply only when mentioned" },
-    ],
-    "open",
-  );
-
-  const config: FeishuConfig = {
-    appId,
-    appSecret,
-    domain,
-    groupPolicy,
-    language: "zh",
-    reactEmoji: DEFAULT_CONFIG.reactEmoji,
-    autoStart: true,
-  };
-  writeJson(CONFIG_HARNESS_PATH, config);
-  console.log(`\n飞书配置已保存 / Feishu config saved\nPath: ${CONFIG_HARNESS_PATH}\nApp ID: ${mask(appId)}\n群聊策略 / Group policy: ${groupPolicy}`);
-  return config;
 }
