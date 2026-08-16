@@ -1,10 +1,11 @@
 # ax-feishu-bridge 的 DeepSeek Harness 插件入口
 #
-# 本地测试（本机绝对路径，已按当前仓库位置生成）：
-#   npx @deepseek-ai/dsh web --patch ./cordis.patch.yml
+# 发布/分发形态：插件行按包名子路径引用（见 package.json 的 exports），
+# 这样通过 dsh plugin add 安装后 Node 模块解析能找到已安装的代码。
 #
-# 发布/分发时请改回包名子路径（见 package.json 的 exports）：
-#   name: 'ax-feishu-bridge/harness'
+# 本地调试时可临时改为本机绝对路径，例如：
+#   name: '/Users/ax/Dev/projects/ax-feishu-bridge/src/adapters/harness/index.ts'
+#   然后运行：npx @deepseek-ai/dsh web --patch ./cordis.patch.yml
 - insert:
     - id: feishu-harness
-      name: '/Users/ax/Dev/projects/ax-feishu-bridge/src/adapters/harness/index.ts'
+      name: 'ax-feishu-bridge/harness'

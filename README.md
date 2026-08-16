@@ -3,14 +3,10 @@
 支持 Deepseek Harness/Pi  接入 飞书/Lark 的消息桥接扩展：在熟悉的聊天界面里与本机 DSH/Pi 持续协作。
 
 <p align="center">
-  <a href="#zh">中文</a> · <a href="#en">English</a>
+  <b>中文</b> · <a href="./README_EN.md">English</a>
 </p>
 
-<a id="zh"></a>
-
-## 中文
-
-Pi Agent飞书交流反馈群：<https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=57dvecbb-95d3-4d01-b689-6ebc3d17c867>
+DSH、Pi飞书交流反馈群：<https://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=57dvecbb-95d3-4d01-b689-6ebc3d17c867>
 
 扩展有什么问题可以加群反馈。
 
@@ -44,7 +40,65 @@ B站：<https://space.bilibili.com/4489397>
 
 ## 快速开始
 
-### 1. 安装
+> 下面的快速开始先介绍 **DeepSeek Harness（DSH）**，Pi 用户可直接跳到 [Pi 快速开始](#pi-quick-start)。
+
+<a id="dsh-quick-start"></a>
+
+### DeepSeek Harness（DSH）
+
+本扩展同时以 DeepSeek Harness 组合包（bundle）形式分发，飞书机器人的配置和聊天体验与 Pi 一致。
+
+#### 1. 安装
+
+前提：本机已安装 dsh
+
+从 npm 安装（`demo` 是组合配置 profile 的名字，可以随意取，首次使用会自动初始化）：
+
+```bash
+dsh plugin --profile demo add ax-feishu-bridge
+```
+
+也可以从 Git 安装：
+
+```bash
+dsh plugin --profile demo add github:AX1202/ax-feishu-bridge
+```
+
+#### 2. 启动与首次配置
+
+```bash
+dsh --profile demo
+```
+
+首次启动时，如果没有检测到飞书机器人配置，会自动进入终端配置向导：推荐选择“扫码自动创建飞书助手”，按提示扫描终端里的二维码即可；如果你已经有现成的飞书/Lark 应用，也可以选择手动填写 App ID 和 App Secret。
+
+配置完成后桥接会自动启动并连上飞书/Lark，之后每次启动 dsh 也会自动连接。如果不想自动连接，把配置里的 `autoStart` 设为 `false` 即可。
+
+> DSH 使用独立的配置文件 `~/.pi/agent/feishu/config.harness.json`，与 Pi 的配置互不干扰，两边可以同时安装、共存。
+
+#### 3. 在飞书里互动
+
+和 Pi 完全一样：
+
+- 私聊：直接发消息
+- 群聊：根据群聊策略决定是否需要 `@` 机器人
+- 话题：每个话题会独立对应一个会话
+
+**群聊策略设为open后，想要不@机器人就能回复任何群内消息，还需要到飞书开发者后台 - 对应机器人事件与回调 - 打开“获取群组中所有消息”或“获取群组中用户和机器人发送的消息”这两个任意一个权限。**
+![图片说明](docs/images/1.jpeg)
+
+`/new`、`/resume`、`/model`、`/thinking`、`/stop`、`/workspace`、`/status`、`/config` 等聊天内命令同样可用，完整列表见下文“飞书里怎么用”。
+
+两点区别需要注意：
+
+- DSH 没有 `/feishu` 管理命令，桥接随 dsh 自动启停，由配置里的 `autoStart` 控制
+- DSH 的环境变量前缀是 `HARNESS_`（例如 `HARNESS_APP_ID`），而不是 Pi 的 `FEISHU_`
+
+<a id="pi-quick-start"></a>
+
+### Pi
+
+#### 1. 安装
 
 ```bash
 pi install npm:ax-feishu-bridge
@@ -56,7 +110,7 @@ pi install npm:ax-feishu-bridge
 pi install git:github.com/AX1202/ax-feishu-bridge
 ```
 
-### 2. 初始化配置
+#### 2. 初始化配置
 
 在 Pi 里运行：
 
@@ -68,7 +122,7 @@ pi install git:github.com/AX1202/ax-feishu-bridge
 
 如果你已经有现成的飞书/Lark 应用，也可以选择手动填写 App ID 和 App Secret。
 
-### 3. 启动桥接
+#### 3. 启动桥接
 
 ```bash
 /feishu start
@@ -76,7 +130,7 @@ pi install git:github.com/AX1202/ax-feishu-bridge
 
 如果开启了自动启动，Pi 会话启动时会自动连上飞书/Lark。
 
-### 4. 开始聊天
+#### 4. 开始聊天
 
 在飞书/Lark 里打开机器人，直接发消息即可。
 
@@ -85,7 +139,6 @@ pi install git:github.com/AX1202/ax-feishu-bridge
 - 话题：每个话题会独立对应一个 Pi 会话
 
 **群聊策略设为open后，想要不@机器人就能回复任何群内消息，还需要到飞书开发者后台 - 对应机器人事件与回调 - 打开“获取群组中所有消息”或“获取群组中用户和机器人发送的消息”这两个任意一个权限。**
-
 
 ---
 
@@ -339,86 +392,3 @@ Windows PATH 加入 C:\Program Files\Git\bin
 `open`模式下：群里和话题里可直接回复，不需要 @，但还需手动在飞书开发者后台开启机器人“获取群组中所有消息”权限才能生效。
 
 ### 还没有实现后台服务开机自启动功能，目前需要电脑开机后手动启动一次 Pi agent 才能正常工作。启动后，Pi agent 无需前台运行，关闭后，仍可以在飞书/Lark 里对话。
-
-<a id="en"></a>
-
-## English
-
-ax-feishu-bridge is a bridge between Pi and Feishu/Lark for chat-based workflows.
-
-### Highlights
-
-- Create a Feishu/Lark bot quickly with QR-code setup
-- Keep separate Pi sessions for DMs, group chats, and group topics
-- Support images and text/code file inputs; image understanding depends on the selected model
-- Parse interactive cards and expand the message you reply to as Pi context
-- Switch models and available thinking levels inside Feishu/Lark
-- Show an immediate “Replying…” card, then stream the answer on that same card
-- Render Markdown replies
-- Keep Pi running in the background after the agent UI is closed
-
-### What's New
-
-- A reply card appears as soon as the bot receives your message, so a slow answer is visibly in progress.
-- `/thinking` opens a picker containing only the thinking levels reported by the current Pi session.
-- Reply to a message or an alert card and Pi receives both the original content and your follow-up.
-- Configure group triggers and streaming behavior in a private chat with `/config`.
-
-### Quick Start
-
-1. Install:
-
-```bash
-pi install npm:ax-feishu-bridge
-```
-
-1. Set up:
-
-```bash
-/feishu setup
-```
-
-1. Start the bridge:
-
-```bash
-/feishu start
-```
-
-1. Chat in Feishu/Lark.
-
-### Common Commands
-
-| Command  | Meaning                                     |
-| -------- | ------------------------------------------- |
-| `/new`   | Start a new Pi session for the current chat |
-| `/resume` | Open past sessions and switch back to one |
-| `/model` | Open the model picker                       |
-| `/thinking` | Open the thinking-level picker for the current session |
-| `/workspace [path]` | View or switch the current workspace |
-| `/status` | View reply status, model, thinking level, and context usage |
-| `/config` | View or update allowed runtime settings in a direct message |
-| `/stop`  | Stop the current reply generation           |
-
-### Config
-
-| Variable              | Meaning                |
-| --------------------- | ---------------------- |
-| `FEISHU_APP_ID`       | Feishu/Lark app ID     |
-| `FEISHU_APP_SECRET`   | Feishu/Lark app secret |
-| `FEISHU_DOMAIN`       | `feishu` or `lark`     |
-| `FEISHU_GROUP_POLICY` | `open` or `mention`    |
-| `FEISHU_LANGUAGE`     | `zh` or `en`           |
-| `FEISHU_REACT_EMOJI`  | Reaction emoji         |
-| `FEISHU_AUTO_START`   | `1` or `0`             |
-| `FEISHU_CARD_ACTION_MODE` | `webhook` or `ws`, default `webhook` |
-| `FEISHU_CARD_ACTION_WEBHOOK_HOST` | Card callback listen host, default `0.0.0.0` |
-| `FEISHU_CARD_ACTION_WEBHOOK_PORT` | Card callback port, default `3001` |
-| `FEISHU_CARD_ACTION_WEBHOOK_PATH` | Card callback path, default `/webhook/card` |
-
-### Notes
-
-- Image understanding depends on the selected model.
-- `/feishu reset` clears config and mappings, but keeps session history.
-- Tasks created from TUI, CLI, or other channels will not be pushed to Feishu automatically.
-- Card buttons now prefer webhook responses. If you want to keep the older WS patch flow temporarily, set `FEISHU_CARD_ACTION_MODE=ws`.
-- The card callback listens on `0.0.0.0:3001/webhook/card` by default, so Feishu must be pointed at a publicly reachable URL for interactive card buttons.
