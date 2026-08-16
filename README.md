@@ -1,4 +1,4 @@
-# pi-feishu-lark
+# ax-feishu-bridge
 
 把 Pi 接入飞书/Lark 的消息桥接扩展：在熟悉的聊天界面里与本机 Pi 持续协作。
 
@@ -47,13 +47,13 @@ B站：<https://space.bilibili.com/4489397>
 ### 1. 安装
 
 ```bash
-pi install npm:pi-feishu-lark
+pi install npm:ax-feishu-bridge
 ```
 
 也可以从 Git 安装：
 
 ```bash
-pi install git:github.com/AX1202/pi-feishu-lark
+pi install git:github.com/AX1202/ax-feishu-bridge
 ```
 
 ### 2. 初始化配置
@@ -341,7 +341,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 
 ## English
 
-Pi-feishu-lark is a bridge between Pi and Feishu/Lark for chat-based workflows.
+ax-feishu-bridge is a bridge between Pi and Feishu/Lark for chat-based workflows.
 
 ### Highlights
 
@@ -366,7 +366,7 @@ Pi-feishu-lark is a bridge between Pi and Feishu/Lark for chat-based workflows.
 1. Install:
 
 ```bash
-pi install npm:pi-feishu-lark
+pi install npm:ax-feishu-bridge
 ```
 
 1. Set up:

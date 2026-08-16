@@ -14,7 +14,7 @@ const modelRuntimeExtensionPath = join(repoRoot, "tests/fixtures/model-runtime-e
 const settleExtensionPath = join(repoRoot, "tests/fixtures/settle-extension.ts");
 
 function runFeishuCommand(command, extraExtensions = [], setup) {
-  const homeDir = mkdtempSync(join(tmpdir(), "pi-feishu-lark-test-"));
+  const homeDir = mkdtempSync(join(tmpdir(), "ax-feishu-bridge-test-"));
   const agentDir = join(homeDir, ".pi", "agent");
   const isolatedEnv = { ...process.env };
   for (const key of Object.keys(isolatedEnv)) {

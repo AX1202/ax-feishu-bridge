@@ -5,7 +5,7 @@ import { buildResumeCard } from "../src/feishu/cards.ts";
 function resumeCard(scope: "current" | "all" = "current") {
   return buildResumeCard({
     key: "p2p:user",
-    workspacePath: "/Users/ax/Dev/projects/pi-feishu-lark",
+    workspacePath: "/Users/ax/Dev/projects/ax-feishu-bridge",
     scope,
     page: 0,
     total: 1,
@@ -24,7 +24,7 @@ test("resume card identifies the current workspace by its full path", () => {
   const card = resumeCard();
   const intro = card.elements[0].content;
 
-  assert.match(intro, /当前工作区：\*\*\/Users\/ax\/Dev\/projects\/pi-feishu-lark\*\*/);
+  assert.match(intro, /当前工作区：\*\*\/Users\/ax\/Dev\/projects\/ax-feishu-bridge\*\*/);
   assert.doesNotMatch(intro, /当前视图|当前项目/);
 });
 
@@ -42,7 +42,7 @@ test("all-sessions view still makes the current workspace visible", () => {
   const intro = card.elements[0].content;
   const actions = card.elements.find((element: any) => element.tag === "action").actions;
 
-  assert.match(intro, /当前工作区：\*\*\/Users\/ax\/Dev\/projects\/pi-feishu-lark\*\*/);
+  assert.match(intro, /当前工作区：\*\*\/Users\/ax\/Dev\/projects\/ax-feishu-bridge\*\*/);
   assert.equal(actions[0].type, "default");
   assert.equal(actions[1].type, "primary");
 });

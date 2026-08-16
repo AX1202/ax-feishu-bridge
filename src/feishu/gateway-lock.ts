@@ -16,7 +16,7 @@ const HEARTBEAT_MS = 5_000;
  * 同一机器人（误配）仍互斥，避免抢同一个飞书连接。
  */
 function lockKeyFor(appId: string | undefined) {
-  return appId ? `pi-feishu-lark.gateway.${appId}` : LEGACY_LOCK_KEY;
+  return appId ? `ax-feishu-bridge.gateway.${appId}` : LEGACY_LOCK_KEY;
 }
 
 export type GatewayOwner = {

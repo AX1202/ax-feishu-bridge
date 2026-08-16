@@ -1,17 +1,17 @@
 {
-  "name": "pi-feishu-lark",
-  "version": "0.3.1",
+  "name": "ax-feishu-bridge",
+  "version": "0.3.2",
   "description": "Feishu/Lark bridge for coding agents — chat with Pi or DeepSeek Harness from Feishu or Lark",
   "type": "module",
   "license": "MIT",
   "keywords": ["pi-package", "pi", "dsh", "feishu", "lark", "extension"],
-  "homepage": "https://github.com/AX1202/pi-feishu-lark#readme",
+  "homepage": "https://github.com/AX1202/ax-feishu-bridge#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AX1202/pi-feishu-lark.git"
+    "url": "git+https://github.com/AX1202/ax-feishu-bridge.git"
   },
   "bugs": {
-    "url": "https://github.com/AX1202/pi-feishu-lark/issues"
+    "url": "https://github.com/AX1202/ax-feishu-bridge/issues"
   },
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.60.0",

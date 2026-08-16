@@ -1,10 +1,10 @@
-# pi-feishu-lark 的 DeepSeek Harness 插件入口
+# ax-feishu-bridge 的 DeepSeek Harness 插件入口
 #
 # 本地测试（本机绝对路径，已按当前仓库位置生成）：
 #   npx @deepseek-ai/dsh web --patch ./cordis.patch.yml
 #
 # 发布/分发时请改回包名子路径（见 package.json 的 exports）：
-#   name: 'pi-feishu-lark/harness'
+#   name: 'ax-feishu-bridge/harness'
 - insert:
     - id: feishu-harness
-      name: '/Users/ax/Dev/projects/pi-feishu-lark/src/adapters/harness/index.ts'
+      name: '/Users/ax/Dev/projects/ax-feishu-bridge/src/adapters/harness/index.ts'
