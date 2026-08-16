@@ -56,6 +56,7 @@ function createMockCtx() {
         session: { id: "session-old" },
         events: [
           { type: "user/message", seq: 0, time: 1, data: { content: [{ type: "text", text: "你好" }] } },
+          { type: "session/title", seq: 1, time: 2, data: { title: "旧会话标题", messageSeqs: [0], source: { kind: "fallback" } } },
         ],
       }),
     },
@@ -153,6 +154,31 @@ test("harness runtime: listResumeSessions reads from sessionQuery", async () => 
     assert.equal(page.items[0]!.path, "session-old");
     assert.equal(page.items[0]!.title, "旧会话标题");
     assert.equal(page.items[0]!.subtitle, "你好");
+    await runtime.dispose();
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    rmSync(homeDir, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: listResumeSessions caches persisted session reads", async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), "feishu-harness-test-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = homeDir;
+  try {
+    const { ctx } = createMockCtx();
+    let reads = 0;
+    const originalReadSession = ctx.sessionQuery.readSession;
+    ctx.sessionQuery.readSession = async () => {
+      reads += 1;
+      return originalReadSession();
+    };
+    const runtime = new HarnessConversationRuntime(ctx, "/tmp/ws");
+    await runtime.listResumeSessions("p2p:user", "current", 0);
+    await runtime.listResumeSessions("p2p:user", "current", 0);
+    // 非 live 历史会话只完整读取一次，后续 /resume、翻页直接命中缓存
+    assert.equal(reads, 1);
     await runtime.dispose();
   } finally {
     if (previousHome === undefined) delete process.env.HOME;

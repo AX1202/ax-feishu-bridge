@@ -57,6 +57,8 @@ export class HarnessConversationRuntime implements ConversationRuntime {
   private readonly selectionRefs = new Map<string, ModelSelectionRef>();
   private readonly queues = new Map<string, Promise<void>>();
   private readonly activeRuns = new Map<string, ActiveRun>();
+  /** 非 live 历史会话的摘要缓存：内容不会变，避免 /resume 每次全量重读。 */
+  private readonly resumeDetailCache = new Map<string, { firstText: string; userCount: number; title?: string }>();
   private modelCatalogPromise: Promise<RuntimeModel[]> | undefined;
   private state: FeishuState;
   private readonly ctx: Context;
@@ -261,13 +263,12 @@ export class HarnessConversationRuntime implements ConversationRuntime {
 
     const items = await Promise.all(pageRecords.map(async (record) => {
       const id = String(record.header.id);
-      const summary = await this.loadSessionSummary(record.header.id);
-      const titleSnapshot = await this.ctx.sessionQuery.readTitle(record.header.id).catch(() => undefined);
-      const hasTitle = Boolean(titleSnapshot?.title?.trim());
+      const detail = await this.loadResumeDetail(record);
+      const hasTitle = Boolean(detail.title?.trim());
       return {
         path: id,
-        title: hasTitle ? titleSnapshot!.title.trim() : summarizeFirstMessage(summary.firstText),
-        subtitle: hasTitle ? summarizeFirstMessage(summary.firstText) : `消息数：${summary.userCount}`,
+        title: hasTitle ? detail.title!.trim() : summarizeFirstMessage(detail.firstText),
+        subtitle: hasTitle ? summarizeFirstMessage(detail.firstText) : `消息数：${detail.userCount}`,
         modifiedLabel: formatModifiedLabel(record.header.createdAt),
         workspaceLabel: scope === "all" ? formatWorkspaceLabel(record.header.cwd) : undefined,
         isCurrent: Boolean(currentSessionId && currentSessionId === id),
@@ -312,10 +313,9 @@ export class HarnessConversationRuntime implements ConversationRuntime {
       this.state.sessions[key] = sessionRef;
       this.state.workspaces![key] = target.header.cwd || this.cwd;
       writeJson(STATE_HARNESS_PATH, this.state);
-      const titleSnapshot = await this.ctx.sessionQuery.readTitle(target.header.id).catch(() => undefined);
-      const summary = await this.loadSessionSummary(target.header.id);
+      const detail = await this.loadResumeDetail(target);
       await onReply([
-        `已切换到历史会话：${titleSnapshot?.title?.trim() || summarizeFirstMessage(summary.firstText)}`,
+        `已切换到历史会话：${detail.title?.trim() || summarizeFirstMessage(detail.firstText)}`,
         `工作区：${this.state.workspaces![key]}`,
         "下一条消息会继续接着这个会话往下聊。",
       ].join("\n"));
@@ -684,20 +684,36 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     return catalog.find((model) => model.provider === provider && model.id === id);
   }
 
-  /** 读取一个历史会话的摘要：首条用户消息文本 + 用户消息条数。 */
-  private async loadSessionSummary(sessionId: SessionId) {
+  /**
+   * 读取一个历史会话的摘要（首条用户消息 + 用户消息条数 + 标题）。
+   * 一次完整读取同时提取摘要和标题；非 live 会话的结果缓存起来，
+   * 避免 /resume 打开、翻页时反复全量读取大体积历史。
+   */
+  private async loadResumeDetail(record: SessionRecord) {
+    const id = String(record.header.id);
+    if (!record.live) {
+      const cached = this.resumeDetailCache.get(id);
+      if (cached) return cached;
+    }
     try {
-      const snapshot = await this.ctx.sessionQuery.readSession(sessionId);
+      const snapshot = await this.ctx.sessionQuery.readSession(record.header.id);
       let firstText = "";
       let userCount = 0;
+      let title: string | undefined;
       for (const event of snapshot.events) {
-        if (event.type !== "user/message") continue;
-        userCount += 1;
-        if (!firstText) firstText = extractContentText((event.data as any).content);
+        if (event.type === "user/message") {
+          userCount += 1;
+          if (!firstText) firstText = extractContentText((event.data as any).content);
+        } else if ((event as any).type === "session/title") {
+          const next = (event as any).data?.title;
+          if (typeof next === "string") title = next;
+        }
       }
-      return { firstText, userCount };
+      const detail = { firstText, userCount, title };
+      if (!record.live) this.resumeDetailCache.set(id, detail);
+      return detail;
     } catch {
-      return { firstText: "", userCount: 0 };
+      return { firstText: "", userCount: 0, title: undefined };
     }
   }
 }
