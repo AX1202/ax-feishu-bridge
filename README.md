@@ -64,14 +64,13 @@ dsh plugin --profile demo add ax-feishu-bridge
 dsh plugin --profile demo add github:AX1202/ax-feishu-bridge
 ```
 
-> **首次安装可能遇到构建授权报错**（提示 `Ignored build scripts: protobufjs` 之类）：这是飞书官方 SDK 的一个依赖，pnpm 新版默认拦截它的安装脚本。解决办法：打开该 profile 目录下的 `pnpm-workspace.yaml`（位于 `~/.dsh/profiles/<profile 名字>/`），把 pnpm 自动生成的 `allowBuilds` 占位项改为 `true`，例如：
+> **首次安装可能遇到构建授权报错**（提示 `Ignored build scripts: protobufjs`）：这是飞书官方 SDK 的一个依赖，pnpm 新版出于安全默认拦截它的安装脚本，属于正常现象，只需授权一次。步骤：
 >
-> ```yaml
-> allowBuilds:
->   protobufjs: true
-> ```
+> 1. 运行：`dsh plugin --profile demo approve-builds`
+> 2. 在出现的列表里按空格选中 `protobufjs`，回车，再输入 `y` 确认
+> 3. 重新运行上面的安装命令
 >
-> 然后重新运行安装命令即可。只需做一次；该脚本只打印一条提示信息，不执行其他操作。如果选择从 Git 安装，`allowBuilds` 里还需要同样放行 `ax-feishu-bridge`（用于安装时编译源码）。
+> 这里的 `demo` 就是你安装时用的那个名字：如果你安装时换了别的名字（或装进已有的 profile，如 `web`），这里同样换成对应的名字即可。该脚本只打印一条提示信息，不执行其他操作。如果选择从 Git 安装，列表中还需要同样选中 `ax-feishu-bridge`（用于安装时编译源码）。
 
 #### 2. 启动与首次配置
 
