@@ -471,15 +471,18 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     ensureWorkspaceExists(workspaceCwd);
 
     const selected = this.state.models?.[key];
-    const selection: ModelSelection | undefined = selected
+    // 会话没选过模型时必须回退到宿主默认模型：否则 agent 拿不到 provider/model，
+    // 系统提示词里的 {{model}} 等变量无值，第一轮组装（persona 等）会直接失败
+    const resolved = selected
       ? {
         provider: selected.provider,
         model: selected.id,
         ...(selected.thinkingLevel ? { reasoningEffort: selected.thinkingLevel as ReasoningEffortId } : {}),
       }
-      : undefined;
+      : this.resolveDefaultSelection();
+    const selection: ModelSelection | undefined = resolved;
     const selectionRef: ModelSelectionRef = { current: selection, assembled: undefined };
-    const agentOptions = selected ? { provider: selected.provider, model: selected.id } : undefined;
+    const agentOptions = resolved ? { provider: resolved.provider, model: resolved.model } : undefined;
 
     const existingSessionId = this.state.sessions[key];
     let handle: AgentHandle;
@@ -547,6 +550,22 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     } catch {
       return undefined;
     }
+  }
+
+  /** 会话未选模型时读宿主默认模型（与官方 headless 驱动的做法一致）；服务缺失时返回 undefined。 */
+  private resolveDefaultSelection(): ModelSelection | undefined {
+    try {
+      const defaults = (this.ctx as any).get?.("agentDefaultModel");
+      const selection = defaults?.currentSelection?.();
+      if (selection?.provider && selection?.model) {
+        return {
+          provider: String(selection.provider),
+          model: String(selection.model),
+          ...(selection.reasoningEffort !== undefined ? { reasoningEffort: selection.reasoningEffort as ReasoningEffortId } : {}),
+        };
+      }
+    } catch {}
+    return undefined;
   }
 
   /** 新建一个飞书会话对应的 agent（随机 sessionId，历史不落旧账）。 */

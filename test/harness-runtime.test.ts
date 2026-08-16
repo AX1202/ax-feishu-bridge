@@ -61,11 +61,11 @@ function createMockCtx() {
     },
     agents: {
       create: async (options: any) => ({
-        agent: { id: options.sessionId, session: { seq: 0, events: [] }, options: {} },
+        agent: { id: options.sessionId, session: { seq: 0, events: [] }, options: options.agentOptions ?? {} },
         dispose: async () => undefined,
       }),
       resume: async (options: any) => ({
-        agent: { id: options.resumeSessionId, session: { seq: 0, events: [] }, options: {} },
+        agent: { id: options.resumeSessionId, session: { seq: 0, events: [] }, options: options.agentOptions ?? {} },
         dispose: async () => undefined,
       }),
     },
@@ -264,6 +264,29 @@ test("harness runtime: session attaches to an existing workspace without creatin
     const handle = await (runtime as any).getAgent(key);
     assert.equal(createCalled, false);
     assert.deepEqual(attached, [String(handle.agent.id)]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: session without a selected model falls back to the host default model", async () => {
+  const { ctx } = createMockCtx();
+  ctx.get = (name: string) => (name === "agentDefaultModel"
+    ? { currentSelection: () => ({ provider: "deepseek", model: "deepseek-v4-flash" }) }
+    : undefined);
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-default-model";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    const handle = await (runtime as any).getAgent(key);
+    // 未选模型的会话（如新群聊）也要带上 provider/model，否则提示词 {{model}} 变量无值，第一轮组装失败
+    assert.deepEqual(handle.agent.options, { provider: "deepseek", model: "deepseek-v4-flash" });
     await runtime.dispose();
   } finally {
     const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });

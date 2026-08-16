@@ -35,11 +35,10 @@ export function conversationKey(msg: FeishuMessage) {
   return `group:${msg.chatId}`;
 }
 
-export function conversationLabel(msg: FeishuMessage) {
-  // 私聊不加标签：一对一会话本身没有语境歧义，加了只会造成与网页直输消息的文本差异
-  if (msg.chatType === "p2p") return "";
-  if (msg.rootId || msg.parentId || msg.threadId || msg.chatMode === "topic") return "[飞书话题]";
-  return "[飞书群聊]";
+export function conversationLabel(_msg: FeishuMessage) {
+  // 不再给消息加渠道标签：已验证这类前缀会诱发模型把工具调用写成 DSML 文本草稿，
+  // 导致整轮没有可发送的回答。消息文本保持与网页直输一致。
+  return "";
 }
 
 export function parseMessageInput(
@@ -54,6 +53,8 @@ export function parseMessageInput(
     if (msg.msgType === "text") {
       let text = String(json.text || "");
       if (botOpenId) text = text.replace(new RegExp(`@?${botOpenId}`, "g"), "");
+      // 去掉飞书 @ 人的占位符（如 @_user_1）：对模型是无意义噪音
+      text = text.replace(/@_user_\d+/g, "");
       return { text: text.trim(), attachments, source: "text" };
     }
     if (msg.msgType === "post") {
@@ -192,7 +193,8 @@ function extractPostText(node: unknown, attachments: FeishuAttachment[]): string
   }
 
   if (tag === "at") {
-    return `@${typeof obj.user_name === "string" && obj.user_name ? obj.user_name : "user"}`;
+    // @ 人占位：不保留名字，避免给模型引入无意义噪音
+    return "";
   }
 
   // 有序列表 / 无序列表：飞书 post 常见 tag，避免 #4 空解析
