@@ -52,27 +52,17 @@ This extension is also distributed as a DeepSeek Harness bundle. Bot setup and t
 
 Prerequisite: dsh is already installed on your machine
 
-Install from npm (`demo` is the name of the bundle profile — pick anything you like; it is initialized automatically on first use):
+Install from npm
 
 ```bash
-dsh plugin --profile demo add ax-feishu-bridge
-```
-
-You can also install from Git:
-
-```bash
-dsh plugin --profile demo add github:AX1202/ax-feishu-bridge
+dsh plugin --profile web add ax-feishu-bridge --ignore-scripts
 ```
 
 #### 2. Launch and First-Time Setup
 
-```bash
-dsh --profile demo
-```
+After installation, restart dsh. If no Feishu bot configuration is detected, a terminal setup wizard starts automatically: it is recommended to choose "scan QR code to auto-create the Feishu assistant" and scan the QR code in the terminal as prompted; if you already have an existing Feishu/Lark app, you can also enter the App ID and App Secret manually.
 
-On first launch, if no Feishu bot configuration is detected, a terminal setup wizard starts automatically: it is recommended to choose "scan QR code to auto-create the Feishu assistant" and scan the QR code in the terminal as prompted; if you already have an existing Feishu/Lark app, you can also enter the App ID and App Secret manually.
-
-After setup, the bridge starts automatically and connects to Feishu/Lark, and it reconnects automatically every time you start dsh afterwards. If you don't want the auto-connection, set `autoStart` to `false` in the config.
+After setup, the bridge starts automatically and connects to Feishu/Lark, and it reconnects automatically every time you start dsh afterwards.
 
 > DSH uses its own config file `~/.dsh/feishu/config.harness.json`, separate from Pi's config — the two can be installed side by side and coexist.
 
@@ -91,7 +81,7 @@ In-chat commands like `/new`, `/resume`, `/model`, `/thinking`, `/stop`, `/works
 
 Two differences to note:
 
-- DSH offers a trimmed-down set of `/feishu` management commands: `setup / status / autostart / debug / reset`, but no `start / stop / restart` — the bridge starts and stops automatically with dsh, controlled by `autoStart` in the config; to start/stop manually, use the plugin switch in the DSH web UI (or restart dsh). See "Managing It inside DSH" below
+- DSH offers a trimmed-down set of `/feishu` management commands: `setup / status / autostart / debug / reset`, but no `start / stop / restart` — the bridge starts and stops automatically with dsh, controlled by `autoStart` in the config.
 - DSH environment variables use the `HARNESS_` prefix (e.g. `HARNESS_APP_ID`) instead of Pi's `FEISHU_`
 
 <a id="pi-quick-start"></a>
@@ -294,7 +284,7 @@ Type these in the DSH web composer or terminal (relies on the host DSH's command
 | `/feishu debug`       | View the last 20 debug log entries                |
 | `/feishu reset confirm` | Clear config and mappings, but keep session history |
 
-Difference from Pi: DSH does not provide `/feishu start | stop | restart` — the bridge starts and stops automatically with dsh; to start/stop manually, use the plugin switch in the DSH web UI (or restart dsh). After `setup` / `reset`, toggle the plugin switch off and on again (or restart dsh) for the new config to take effect.
+Difference from Pi: DSH does not provide `/feishu start | stop | restart` — the bridge starts and stops automatically with dsh. After `setup` / `reset`, restart dsh for the new config to take effect.
 
 > Note (DSH platform limitation): command results render as collapsible command nodes in the conversation flow, but **a brand-new blank session does not render command records** — if a command seems to do nothing, send any ordinary message in that session first, then run the command. `setup` is unaffected (its prompts and QR code live in the terminal).
 
