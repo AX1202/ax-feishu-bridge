@@ -376,3 +376,133 @@ test("harness runtime: prompt with images is rejected in phase one", async () =>
     rmSync(homeDir, { recursive: true, force: true });
   }
 });
+
+/** 带 agentPresets 服务的 mock：resolve 返回指定/默认预设，mount 记录调用。 */
+function createPresetMock(mounted: Array<string | undefined>) {
+  return {
+    resolve: async (id?: string) => ({ id: id ?? "standard", name: id ?? "Standard mode" }),
+    mount: async (_agentCtx: any, id?: string) => {
+      mounted.push(id);
+      return { id: id ?? "standard", name: "Standard mode" };
+    },
+  };
+}
+
+/** 替换 agents.create：执行 setup 并把 meta 记录下来。 */
+function captureCreate(ctx: any, createdMeta: any[]) {
+  ctx.agents.create = async (options: any) => {
+    createdMeta.push(options.meta);
+    const agentCtx = { on: () => () => undefined, agent: { id: options.sessionId, session: { seq: 0, events: [] } } };
+    if (options.setup) await options.setup(agentCtx);
+    return { agent: agentCtx.agent, dispose: async () => undefined };
+  };
+}
+
+/** 替换 agents.resume：执行 setup，session 带给定 header。 */
+function captureResume(ctx: any, header: Record<string, unknown>) {
+  ctx.agents.resume = async (options: any) => {
+    const agentCtx = {
+      on: () => () => undefined,
+      agent: { id: options.resumeSessionId, session: { seq: 3, events: [], header } },
+    };
+    if (options.setup) await options.setup(agentCtx);
+    return { agent: agentCtx.agent, dispose: async () => undefined };
+  };
+}
+
+test("harness runtime: new session records the default preset and mounts it", async () => {
+  const mounted: Array<string | undefined> = [];
+  const createdMeta: any[] = [];
+  const { ctx } = createMockCtx();
+  ctx.get = (name: string) => (name === "agentPresets" ? createPresetMock(mounted) : undefined);
+  captureCreate(ctx, createdMeta);
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-preset-create";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    await (runtime as any).getAgent(key);
+    // 会话档案写入默认预设（Web UI 顶部标题据此显示模式）
+    assert.deepEqual(createdMeta, [{ cwd: ws, agentPreset: "standard" }]);
+    // 已挂载默认预设组合
+    assert.deepEqual(mounted, ["standard"]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: resumed session is re-mounted on its recorded preset", async () => {
+  const mounted: Array<string | undefined> = [];
+  const { ctx } = createMockCtx();
+  ctx.get = (name: string) => (name === "agentPresets" ? createPresetMock(mounted) : undefined);
+  captureResume(ctx, { id: "feishu-minimal-session", agentPreset: "minimal" });
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-preset-resume";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    (runtime as any).state.sessions[key] = "feishu-minimal-session";
+    const handle = await (runtime as any).getAgent(key);
+    assert.equal(String(handle.agent.id), "feishu-minimal-session");
+    // 按会话档案恢复原 preset
+    assert.deepEqual(mounted, ["minimal"]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: legacy session without a recorded preset mounts the host default", async () => {
+  const mounted: Array<string | undefined> = [];
+  const { ctx } = createMockCtx();
+  ctx.get = (name: string) => (name === "agentPresets" ? createPresetMock(mounted) : undefined);
+  captureResume(ctx, { id: "feishu-legacy-session" });
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-preset-legacy";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    (runtime as any).state.sessions[key] = "feishu-legacy-session";
+    await (runtime as any).getAgent(key);
+    // 无记录 → mount(undefined) → 宿主落默认预设
+    assert.deepEqual(mounted, [undefined]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: deployment without presets creates sessions with no preset record", async () => {
+  const createdMeta: any[] = [];
+  const { ctx } = createMockCtx(); // 无 get → 无 agentPresets 服务
+  captureCreate(ctx, createdMeta);
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-preset-none";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    await (runtime as any).getAgent(key);
+    // 不写预设档案、不挂载，行为与修复前一致
+    assert.deepEqual(createdMeta, [{ cwd: ws }]);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});

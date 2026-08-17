@@ -82,7 +82,7 @@ In-chat commands like `/new`, `/resume`, `/model`, `/thinking`, `/stop`, `/works
 Two differences to note:
 
 - DSH offers a trimmed-down set of `/feishu` management commands: `setup / status / autostart / debug / reset`, but no `start / stop / restart` — the bridge starts and stops automatically with dsh, controlled by `autoStart` in the config.
-- DSH environment variables use the `HARNESS_` prefix (e.g. `HARNESS_APP_ID`) instead of Pi's `FEISHU_`
+- DSH environment variables use the `HARNESS_` prefix (e.g. `HARNESS_APP_ID`) instead of Pi's `FEISHU_`; the card callback port also differs by default — Pi uses `3001`, DSH uses `3002`, so both can run side by side without conflicts
 
 <a id="pi-quick-start"></a>
 
@@ -314,7 +314,7 @@ It can also be configured via environment variables:
 | `FEISHU_AUTO_START`   | `1` or `0`                     |
 | `FEISHU_CARD_ACTION_MODE` | `webhook` or `ws`, default `webhook` |
 | `FEISHU_CARD_ACTION_WEBHOOK_HOST` | Card callback listen address, default `0.0.0.0` |
-| `FEISHU_CARD_ACTION_WEBHOOK_PORT` | Card callback port, default `3001` |
+| `FEISHU_CARD_ACTION_WEBHOOK_PORT` | Card callback port, default `3001` (DSH uses `HARNESS_CARD_ACTION_WEBHOOK_PORT`, default `3002`) |
 | `FEISHU_CARD_ACTION_WEBHOOK_PATH` | Card callback path, default `/webhook/card` |
 | `FEISHU_PROMPT_NOTIFY_SEC` | After a long task exceeds this many seconds, send a "still processing" notice in Feishu, default `180`, `0` disables |
 | `FEISHU_PROMPT_TIMEOUT_SEC` | Hard timeout in seconds; the task is aborted and reported failed on timeout, default `0` (no hard timeout — even long-running tasks won't be reported failed) |
@@ -380,7 +380,7 @@ The hot-updatable scope only includes `groupPolicy`, `groupKeywords`, `groupAlso
 - `/workspace` currently only supports absolute paths, or paths starting with `~/`.
 - `/resume` first shows the recent sessions of the current project by default; you can switch to "all sessions" in the card and page through them.
 - Card buttons now prefer webhook response mode; if you want to temporarily keep the older WS update flow, set `FEISHU_CARD_ACTION_MODE` to `ws`.
-- The card callback listens on `0.0.0.0:3001/webhook/card` by default; you need to point the interactive card callback URL to an externally reachable URL in the Feishu developer console.
+- The card callback listens on `0.0.0.0:3001/webhook/card` (Pi) / `0.0.0.0:3002/webhook/card` (DSH) by default; you need to point the interactive card callback URL to an externally reachable URL in the Feishu developer console.
 
 ***
 

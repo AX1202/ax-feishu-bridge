@@ -130,6 +130,7 @@ export const DEFAULT_CONFIG: Pick<
   ignoreBotMessages: true,
   cardActionMode: "webhook",
   cardActionWebhookHost: "0.0.0.0",
+  // Pi 默认端口；DSH 的默认端口见 defaultCardActionWebhookPort()
   cardActionWebhookPort: 3001,
   cardActionWebhookPath: "/webhook/card",
   language: "zh",
@@ -152,6 +153,15 @@ export const DEFAULT_CONFIG: Pick<
   streamMinChars: 8,
   streamMaxBodyChars: 12000,
 };
+
+/**
+ * 默认卡片回调端口：Pi 用 3001（历史默认），DSH 用 3002。
+ * Pi 与 DSH 并行启用时如果都用 3001 会互相抢端口（EADDRINUSE），
+ * 因此按 runtime 区分默认值，开箱即用即可共存。
+ */
+export function defaultCardActionWebhookPort(): number {
+  return getRuntimeSource().id === "harness" ? 3002 : 3001;
+}
 
 export function ensureRoot() {
   if (getRuntimeSource().id === "harness") {
@@ -277,7 +287,7 @@ export function loadBaseConfig(): FeishuConfig | undefined {
       ignoreBotMessages: parseBool(env("IGNORE_BOT_MESSAGES"), DEFAULT_CONFIG.ignoreBotMessages!),
       cardActionMode: parseCardActionMode(env("CARD_ACTION_MODE")) || DEFAULT_CONFIG.cardActionMode,
       cardActionWebhookHost: env("CARD_ACTION_WEBHOOK_HOST")?.trim() || DEFAULT_CONFIG.cardActionWebhookHost,
-      cardActionWebhookPort: parsePort(env("CARD_ACTION_WEBHOOK_PORT")) ?? DEFAULT_CONFIG.cardActionWebhookPort,
+      cardActionWebhookPort: parsePort(env("CARD_ACTION_WEBHOOK_PORT")) ?? defaultCardActionWebhookPort(),
       cardActionWebhookPath: normalizeWebhookPath(env("CARD_ACTION_WEBHOOK_PATH")) || DEFAULT_CONFIG.cardActionWebhookPath,
       language: (env("LANGUAGE") as "zh" | "en") || DEFAULT_CONFIG.language,
       reactEmoji: env("REACT_EMOJI") || DEFAULT_CONFIG.reactEmoji,
@@ -311,7 +321,7 @@ export function loadBaseConfig(): FeishuConfig | undefined {
     ignoreBotMessages: parseBool(cfg.ignoreBotMessages, DEFAULT_CONFIG.ignoreBotMessages!),
     cardActionMode: parseCardActionMode(cfg.cardActionMode) || DEFAULT_CONFIG.cardActionMode,
     cardActionWebhookHost: cfg.cardActionWebhookHost || DEFAULT_CONFIG.cardActionWebhookHost,
-    cardActionWebhookPort: typeof cfg.cardActionWebhookPort === "number" ? cfg.cardActionWebhookPort : DEFAULT_CONFIG.cardActionWebhookPort,
+    cardActionWebhookPort: typeof cfg.cardActionWebhookPort === "number" ? cfg.cardActionWebhookPort : defaultCardActionWebhookPort(),
     cardActionWebhookPath: normalizeWebhookPath(cfg.cardActionWebhookPath) || DEFAULT_CONFIG.cardActionWebhookPath,
     language: cfg.language || DEFAULT_CONFIG.language,
     reactEmoji: cfg.reactEmoji || DEFAULT_CONFIG.reactEmoji,

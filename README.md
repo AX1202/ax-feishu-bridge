@@ -83,7 +83,7 @@ dsh plugin --profile web add ax-feishu-bridge --ignore-scripts
 两点区别需要注意：
 
 - DSH 的 `/feishu` 管理命令是精简版：提供 `setup / status / autostart / debug / reset`，没有 `start / stop / restart`——桥接随 dsh 自动启停，由配置里的 `autoStart` 控制。
-- DSH 的环境变量前缀是 `HARNESS_`（例如 `HARNESS_APP_ID`），而不是 Pi 的 `FEISHU_`
+- DSH 的环境变量前缀是 `HARNESS_`（例如 `HARNESS_APP_ID`），而不是 Pi 的 `FEISHU_`；卡片回调端口默认也不同——Pi 默认 `3001`，DSH 默认 `3002`，两边同时启用也不会冲突。
 
 <a id="pi-quick-start"></a>
 
@@ -315,7 +315,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 | `FEISHU_AUTO_START`   | `1` 或 `0`                     |
 | `FEISHU_CARD_ACTION_MODE` | `webhook` 或 `ws`，默认 `webhook` |
 | `FEISHU_CARD_ACTION_WEBHOOK_HOST` | 卡片回调监听地址，默认 `0.0.0.0` |
-| `FEISHU_CARD_ACTION_WEBHOOK_PORT` | 卡片回调端口，默认 `3001` |
+| `FEISHU_CARD_ACTION_WEBHOOK_PORT` | 卡片回调端口，默认 `3001`（DSH 用 `HARNESS_CARD_ACTION_WEBHOOK_PORT`，默认 `3002`） |
 | `FEISHU_CARD_ACTION_WEBHOOK_PATH` | 卡片回调路径，默认 `/webhook/card` |
 | `FEISHU_PROMPT_NOTIFY_SEC` | 长任务超过多少秒后在飞书发一条“仍在处理中”提示，默认 `180`，`0` 关闭 |
 | `FEISHU_PROMPT_TIMEOUT_SEC` | 任务硬超时秒数，超时后中止任务并报失败，默认 `0`（不设硬超时，长期运行也不会被报失败） |
@@ -384,7 +384,7 @@ Windows PATH 加入 C:\Program Files\Git\bin
 - `/workspace` 当前只支持绝对路径，或 `~/` 开头的路径。
 - `/resume` 默认先显示当前项目的最近历史会话，也可以在卡片里切到“全部会话”并翻页浏览。
 - 卡片按钮现在优先走 webhook 回包模式；如果你还想临时沿用旧的 WS 更新方式，可以把 `FEISHU_CARD_ACTION_MODE` 设成 `ws`。
-- 卡片回调默认监听 `0.0.0.0:3001/webhook/card`，需要在飞书开发者后台把交互卡片回调地址指到一个外部可访问的 URL。
+- 卡片回调默认监听 `0.0.0.0:3001/webhook/card`（Pi）/ `0.0.0.0:3002/webhook/card`（DSH），需要在飞书开发者后台把交互卡片回调地址指到一个外部可访问的 URL。
 
 ***
 

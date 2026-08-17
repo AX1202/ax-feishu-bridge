@@ -22,6 +22,7 @@ import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import type { ReasoningEffortId } from "@deepseek-ai/dsh-llm";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
+import { resolveSessionPreset } from "@deepseek-ai/dsh-agent-presets";
 import type { SessionRecord } from "@deepseek-ai/dsh-session-query";
 import type { FeishuBridgeRuntime } from "../../feishu/bridge-runtime.ts";
 import { ensureRoot, readJson, STATE_HARNESS_PATH, writeJson } from "../../feishu/config.ts";
@@ -492,8 +493,11 @@ export class HarnessConversationRuntime implements ConversationRuntime {
         handle = await this.ctx.agents.resume({
           resumeSessionId: SessionId(existingSessionId),
           agentOptions,
-          setup: (agentCtx) => {
+          setup: async (agentCtx) => {
             installModelSelection(agentCtx, selectionRef);
+            // 恢复已有会话：按会话档案里记录的 preset 重新挂载组合；
+            // 老会话无记录时挂宿主默认预设（与宿主对无 preset 会话的处理一致）
+            await this.mountAgentPreset(agentCtx, this.recordedAgentPreset(agentCtx));
           },
         });
       } catch (error) {
@@ -612,14 +616,68 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     selectionRef: ModelSelectionRef,
   ): Promise<AgentHandle> {
     debugLog("feishu.harness.agent_create", { cwd: workspaceCwd });
+    // 与宿主 Web 端创建一致：创建前解析要用的 agent preset（未指定 → 宿主默认预设，
+    // 即 Web UI 设置面板里的默认模式），写入会话档案 meta.agentPreset
+    // （Web UI 顶部标题的模式标识据此显示），并在 setup 中挂载该预设组合。
+    const presetId = await this.resolveAgentPreset();
     return this.ctx.agents.create({
       sessionId: SessionId(`feishu-${randomUUID()}`),
-      meta: { cwd: workspaceCwd },
+      meta: {
+        cwd: workspaceCwd,
+        ...(presetId ? { agentPreset: presetId } : {}),
+      },
       agentOptions,
-      setup: (agentCtx) => {
+      setup: async (agentCtx) => {
         installModelSelection(agentCtx, selectionRef);
+        await this.mountAgentPreset(agentCtx, presetId);
       },
     });
+  }
+
+  /** 宿主 agentPresets 服务（缺失时返回 undefined，无预设部署保持兼容）。 */
+  private getAgentPresetsService(): any {
+    try {
+      const ctx = this.ctx as any;
+      return typeof ctx.get === "function" ? ctx.get("agentPresets") : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 解析会话将使用的 agent preset（未指定 → 宿主默认预设，与 Web UI 行为一致）。
+   * 无预设服务的部署返回 undefined，会话不记录也不挂载预设。
+   */
+  private async resolveAgentPreset(presetId?: string): Promise<string | undefined> {
+    const presets = this.getAgentPresetsService();
+    if (!presets) return undefined;
+    try {
+      const resolved = await presets.resolve(presetId);
+      return resolved?.id;
+    } catch (error) {
+      debugLog("feishu.harness.agent_preset_resolve_error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  }
+
+  /** 从已重建的 agent 会话档案解析它记录的 preset（无记录返回 undefined）。 */
+  private recordedAgentPreset(agentCtx: Context): string | undefined {
+    try {
+      const session = (agentCtx as any).agent?.session;
+      if (!session?.header) return undefined;
+      return resolveSessionPreset({ header: session.header, events: session.events ?? [] });
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** 把 agent 挂载到指定 preset 组合（与宿主 Web 端 composeAgent 一致）；无预设服务时为空操作。 */
+  private async mountAgentPreset(agentCtx: Context, presetId: string | undefined): Promise<void> {
+    const presets = this.getAgentPresetsService();
+    if (!presets) return;
+    await presets.mount(agentCtx, presetId);
   }
 
   private async disposeAgent(key: string) {
