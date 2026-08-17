@@ -234,6 +234,41 @@ test("harness runtime: resume failure (session live elsewhere) falls back to a n
   }
 });
 
+test("harness runtime: resume failure with a live agent adopts it instead of creating a new session", async () => {
+  const { ctx } = createMockCtx();
+  // 宿主报：会话被网页端占用（live），无法 resume
+  ctx.agents.resume = async () => {
+    throw new Error('cannot prepare session "session-web-live" while it is live');
+  };
+  // 但宿主里存在对应的 live agent（网页端创建的会话）
+  const liveAgent = { id: "session-web-live", session: { seq: 3, events: [] }, options: {} };
+  ctx.agents.get = (id: any) => (String(id) === "session-web-live" ? liveAgent : undefined);
+  ctx.agents.roots = () => [liveAgent];
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-resume-adopt";
+  try {
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    (runtime as any).state.sessions[key] = "session-web-live";
+    const handle = await (runtime as any).getAgent(key);
+    // 接管 live agent：继续用原会话，而不是新建
+    assert.equal(handle.agent, liveAgent);
+    assert.equal((runtime as any).state.sessions[key], "session-web-live");
+    // 不拥有该 agent：dispose 是空操作，不会把宿主的 agent 拆掉
+    let created = false;
+    ctx.agents.create = async () => { created = true; throw new Error("should not create"); };
+    await handle.dispose();
+    assert.equal(created, false);
+    await runtime.dispose();
+  } finally {
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
 test("harness runtime: new session is attached to its workspace (auto-creating it)", async () => {
   const { ctx } = createMockCtx();
   const created: string[] = [];

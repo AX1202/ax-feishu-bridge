@@ -497,14 +497,22 @@ export class HarnessConversationRuntime implements ConversationRuntime {
           },
         });
       } catch (error) {
-        // 该会话可能已被其他入口占用（如在 Harness 网页里打开过，会话在宿主里处于 live），
-        // 或持久化记录损坏导致无法恢复：回退为新建会话，保证飞书对话不被卡死。
         debugLog("feishu.harness.agent_resume_failed", {
           key,
           sessionId: existingSessionId,
           error: error instanceof Error ? error.message : String(error),
         });
-        handle = await this.createAgentHandle(workspaceCwd, agentOptions, selectionRef);
+        // 该会话可能已被其他入口占用（如在 Harness 网页里创建/打开过，会话在宿主里处于 live，
+        // resume 会报 "cannot prepare session ... while it is live"），或持久化记录损坏。
+        // 优先复用宿主里已 live 的 agent（与宿主 apiproxy 的兜底策略一致），
+        // 这样飞书能真正接着原会话往下聊；没有 live agent 时才回退新建。
+        const live = this.findLiveAgent(existingSessionId);
+        if (live) {
+          debugLog("feishu.harness.agent_adopt_live", { key, sessionId: existingSessionId });
+          handle = this.adoptLiveAgent(live);
+        } else {
+          handle = await this.createAgentHandle(workspaceCwd, agentOptions, selectionRef);
+        }
       }
     } else {
       handle = await this.createAgentHandle(workspaceCwd, agentOptions, selectionRef);
@@ -566,6 +574,35 @@ export class HarnessConversationRuntime implements ConversationRuntime {
       }
     } catch {}
     return undefined;
+  }
+
+  /**
+   * 查找宿主里仍 live 的 agent（如网页端创建/打开的会话）。
+   * 不接管子代理等被其他 agent 拥有的会话，只接顶层会话。
+   */
+  private findLiveAgent(sessionId: string): Agent | undefined {
+    try {
+      const registry = this.ctx.agents as any;
+      if (typeof registry.get !== "function") return undefined;
+      const live: Agent | undefined = registry.get(SessionId(sessionId));
+      if (!live) return undefined;
+      if (typeof registry.roots === "function") {
+        const roots: Agent[] = registry.roots();
+        if (!roots.includes(live)) return undefined;
+      }
+      return live;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * 把宿主已有的 live agent 包装成 AgentHandle 供飞书侧驱动。
+   * 我们不拥有它（网页端/宿主还在使用，生命周期与落盘由宿主负责），
+   * 所以 dispose 必须是空操作；模型选择也沿用创建时的配置，不重新注入。
+   */
+  private adoptLiveAgent(agent: Agent): AgentHandle {
+    return { agent, dispose: async () => undefined };
   }
 
   /** 新建一个飞书会话对应的 agent（随机 sessionId，历史不落旧账）。 */
