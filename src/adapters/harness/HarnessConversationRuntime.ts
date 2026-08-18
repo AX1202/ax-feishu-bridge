@@ -12,7 +12,7 @@
  * - 历史会话列表与 /resume（ctx.sessionQuery）
  * - 模型列表与切换（ctx.llm + installModelSelection）
  * - 思考强度（模型 reasoning metadata + agent/request 配置）
- * - 图片输入暂不支持（后续阶段）
+ * - 图片输入（ctx.attachments 持久化图片，用户消息携带 image 内容块）
  */
 import { randomUUID } from "node:crypto";
 import type { Context } from "@deepseek-ai/cordis";
@@ -20,6 +20,7 @@ import type { Agent, AgentHandle, ModelSelection } from "@deepseek-ai/dsh-agent"
 import { installModelSelection, type ModelSelectionRef } from "@deepseek-ai/dsh-agent";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 import type { ReasoningEffortId } from "@deepseek-ai/dsh-llm";
+import type { ImageAttachmentRef, ImageMediaType } from "@deepseek-ai/dsh-attachment";
 import { SessionId } from "@deepseek-ai/dsh-session";
 import type { Session, SessionEvent } from "@deepseek-ai/dsh-session";
 import { resolveSessionPreset } from "@deepseek-ai/dsh-agent-presets";
@@ -101,16 +102,9 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     status?: ReplyCardSink,
     onDelta?: (delta: string) => void,
   ) {
-    // 第一阶段：Harness 核心 Message 没有通用 multimodal block，图片输入后续阶段支持。
-    if (images.length > 0) {
-      await onReply("当前 DeepSeek Harness 版本暂不支持图片输入，请发送文字或文件。");
-      await status?.finish("failed", "unsupported image input");
-      return;
-    }
-
     const previous = this.previousTurn(key);
     const next = previous.then(async () => {
-      debugLog("feishu.harness.prompt.start", { key, textLength: userText.length });
+      debugLog("feishu.harness.prompt.start", { key, textLength: userText.length, imageCount: images.length });
       const handle = await this.getAgent(key);
       const agent = handle.agent;
       const run: ActiveRun = { agent, runId: status?.runId, stopped: false, status, onDelta };
@@ -119,7 +113,7 @@ export class HarnessConversationRuntime implements ConversationRuntime {
       const firstSeq = agent.session.seq;
       try {
         agent.followup(createUserMessage({
-          content: [{ type: "text", text: userText }],
+          content: await this.buildUserContent(userText, images),
           source: { kind: "user" },
         }));
         await this.runPromptWithTimeouts(key, agent, run, firstSeq, onReply, status);
@@ -155,6 +149,77 @@ export class HarnessConversationRuntime implements ConversationRuntime {
     });
     this.queues.set(key, next);
     await next;
+  }
+
+  /**
+   * 组装用户消息内容：文字在前，图片经宿主附件服务（ctx.attachments）持久化后
+   * 以 image 内容块携带。附件服务缺失或图片不合法时抛出友好错误。
+   */
+  private async buildUserContent(
+    userText: string,
+    images: Array<{ type: "image"; data: string; mimeType: string }>,
+  ): Promise<Array<{ type: "text"; text: string } | { type: "image"; attachment: ImageAttachmentRef }>> {
+    const content: Array<{ type: "text"; text: string } | { type: "image"; attachment: ImageAttachmentRef }> = [
+      { type: "text", text: userText },
+    ];
+    if (!images.length) return content;
+    const attachments = this.getAttachments();
+    if (!attachments) {
+      throw new Error("当前 Harness 宿主未提供图片附件服务，暂不支持图片输入，请发送文字或文件。");
+    }
+    for (const image of images) {
+      const mediaType = this.toImageMediaType(image.mimeType);
+      if (!mediaType) {
+        throw new Error(`图片格式暂不支持：${image.mimeType || "未知"}（支持 png/jpg/webp/gif）`);
+      }
+      try {
+        const ref: ImageAttachmentRef = await attachments.saveImage({
+          data: new Uint8Array(Buffer.from(image.data, "base64")),
+          mediaType,
+        });
+        content.push({ type: "image", attachment: ref });
+      } catch (error) {
+        throw new Error(`图片保存失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    return content;
+  }
+
+  /**
+   * 宿主附件服务：未挂载时属性访问会直接抛错（cordis "without inject"），
+   * 因此优先用 ctx.get 探测，全程防御式。
+   */
+  private getAttachments(): { saveImage(input: unknown): Promise<ImageAttachmentRef> } | undefined {
+    const ctx = this.ctx as any;
+    try {
+      if (typeof ctx.get === "function") {
+        const svc = ctx.get("attachments");
+        if (svc && typeof svc.saveImage === "function") return svc;
+      }
+    } catch {
+      // 服务未挂载
+    }
+    try {
+      const svc = ctx.attachments;
+      return svc && typeof svc.saveImage === "function" ? svc : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  private toImageMediaType(mime: string): ImageMediaType | undefined {
+    switch (mime) {
+      case "image/png":
+        return "image/png";
+      case "image/jpeg":
+        return "image/jpeg";
+      case "image/webp":
+        return "image/webp";
+      case "image/gif":
+        return "image/gif";
+      default:
+        return undefined;
+    }
   }
 
   /** 供 /status 使用 */

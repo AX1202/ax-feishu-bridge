@@ -6,6 +6,9 @@
  *   缺失时防御式跳过，不影响桥接本体；配置与 Pi 完全独立，autoStart 控制是否启动
  */
 import type { Context } from "@deepseek-ai/cordis";
+import LocalAttachmentStore from "@deepseek-ai/dsh-attachment-local";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { FeishuBridgeRuntime } from "../../feishu/bridge-runtime.ts";
 import { FeishuBridgeStore } from "../../feishu/bridge-store.ts";
 import { FeishuDelivery } from "../../feishu/delivery.ts";
@@ -36,6 +39,7 @@ let connectionStatus = "未启动 / not started";
 export function apply(ctx: Context) {
   // Harness 使用自己独立的配置/状态/记录文件（config.harness.json 等），与 Pi 互不干扰
   setRuntimeSource(HARNESS_SOURCE);
+  ensureAttachmentStore(ctx);
   registerFeishuCommand(ctx, {
     getConnectionStatus: () => connectionStatus,
     // 重新配置场景：已有配置时先在终端确认覆盖
@@ -60,6 +64,28 @@ export function apply(ctx: Context) {
     }
     startFeishu(ctx, cfg);
   })();
+}
+
+/**
+ * 图片输入依赖宿主 attachments 服务；当前部分 dsh 部署未挂载它，
+ * 缺失时由本插件自行挂载官方本地存储实现（存到 ~/.dsh/attachments）。
+ * 已挂载时直接复用，不重复注册。
+ */
+function ensureAttachmentStore(ctx: Context) {
+  try {
+    if ((ctx as any).get("attachments")) return;
+  } catch {
+    // 服务未挂载，继续自行注册
+  }
+  try {
+    const dshHome = process.env.DSH_HOME?.trim() || join(homedir(), ".dsh");
+    ctx.plugin(LocalAttachmentStore, { dshHome });
+    console.log("[feishu] 宿主未提供图片附件服务，飞书插件已挂载本地附件存储。");
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    debugLog("feishu.harness.attachment_store_failed", { error: message });
+    console.warn(`[feishu] 图片附件服务挂载失败，图片输入将不可用：${message}`);
+  }
 }
 
 function startFeishu(ctx: Context, cfg: FeishuConfig) {

@@ -359,24 +359,6 @@ test("harness runtime: session without a selected model falls back to the host d
   }
 });
 
-test("harness runtime: prompt with images is rejected in phase one", async () => {
-  const homeDir = mkdtempSync(join(tmpdir(), "feishu-harness-test-"));
-  const previousHome = process.env.HOME;
-  process.env.HOME = homeDir;
-  try {
-    const { ctx } = createMockCtx();
-    const runtime = new HarnessConversationRuntime(ctx, "/tmp/ws");
-    let reply = "";
-    await runtime.promptWithImages("p2p:user", "看图", [{ type: "image", data: "x", mimeType: "image/png" }], async (text) => { reply = text; });
-    assert.match(reply, /暂不支持图片输入/);
-    await runtime.dispose();
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-    rmSync(homeDir, { recursive: true, force: true });
-  }
-});
-
 /** 带 agentPresets 服务的 mock：resolve 返回指定/默认预设，mount 记录调用。 */
 function createPresetMock(mounted: Array<string | undefined>) {
   return {
@@ -503,6 +485,105 @@ test("harness runtime: deployment without presets creates sessions with no prese
       delete state.sessions[key];
       writeJson(STATE_HARNESS_PATH, state);
     }
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: promptWithImages saves images via attachments and carries image blocks", async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), "feishu-harness-test-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = homeDir;
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-image";
+  try {
+    const { ctx } = createMockCtx();
+    // 宿主附件服务：记录保存请求并返回引用
+    const saved: any[] = [];
+    ctx.attachments = {
+      saveImage: async (input: any) => {
+        saved.push(input);
+        return { attachmentId: `att-${saved.length}`, mediaType: input.mediaType, bytes: input.data.length, width: 1, height: 1 };
+      },
+    };
+    // 捕获投递给 agent 的用户消息
+    const followups: any[] = [];
+    ctx.agents.create = async (options: any) => {
+      const agentCtx = {
+        on: () => () => undefined,
+        agent: {
+          id: options.sessionId,
+          session: { seq: 0, events: [] },
+          followup: (msg: any) => { followups.push(msg); },
+          whenIdle: async () => undefined,
+          cancel: () => undefined,
+        },
+      };
+      if (options.setup) await options.setup(agentCtx);
+      return { agent: agentCtx.agent, dispose: async () => undefined };
+    };
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    const pngBytes = [0x89, 0x50, 0x4e, 0x47];
+    const pngBase64 = Buffer.from(pngBytes).toString("base64");
+    await runtime.promptWithImages(
+      key,
+      "看看这张图",
+      [{ type: "image", data: pngBase64, mimeType: "image/png" }],
+      async () => undefined,
+    );
+    // 图片已交给附件服务持久化，字节与格式正确
+    assert.equal(saved.length, 1);
+    assert.equal(saved[0].mediaType, "image/png");
+    assert.deepEqual(Array.from(saved[0].data), pngBytes);
+    // 用户消息同时携带文字与 image 内容块（引用指向附件服务返回值）
+    assert.equal(followups.length, 1);
+    const content = followups[0].content;
+    assert.equal(content.length, 2);
+    assert.equal(content[0].type, "text");
+    assert.equal(content[0].text, "看看这张图");
+    assert.equal(content[1].type, "image");
+    assert.equal(content[1].attachment.attachmentId, "att-1");
+    await runtime.dispose();
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(homeDir, { recursive: true, force: true });
+    rmSync(ws, { recursive: true, force: true });
+  }
+});
+
+test("harness runtime: promptWithImages replies friendly error when host has no attachments service", async () => {
+  const homeDir = mkdtempSync(join(tmpdir(), "feishu-harness-test-"));
+  const previousHome = process.env.HOME;
+  process.env.HOME = homeDir;
+  const ws = mkdtempSync(join(tmpdir(), "feishu-harness-ws-"));
+  const key = "p2p:test-image-no-svc";
+  try {
+    const { ctx } = createMockCtx(); // 不提供 ctx.attachments
+    const runtime = new HarnessConversationRuntime(ctx, ws);
+    const replies: string[] = [];
+    await runtime.promptWithImages(
+      key,
+      "看看这张图",
+      [{ type: "image", data: Buffer.from([1, 2, 3]).toString("base64"), mimeType: "image/png" }],
+      async (text) => { replies.push(text); },
+    );
+    // 宿主缺附件服务时走错误兜底，提示友好且不调用模型
+    assert.match(replies.join("\n"), /暂不支持图片输入/);
+    await runtime.dispose();
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+    const state = readJson<any>(STATE_HARNESS_PATH, { sessions: {} });
+    if (state.sessions?.[key] !== undefined) {
+      delete state.sessions[key];
+      writeJson(STATE_HARNESS_PATH, state);
+    }
+    rmSync(homeDir, { recursive: true, force: true });
     rmSync(ws, { recursive: true, force: true });
   }
 });
