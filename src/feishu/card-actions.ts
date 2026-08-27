@@ -8,6 +8,7 @@ import {
   buildResumeCard,
   buildThinkingCard,
   parseModelActionValue,
+  parseModelPageActionValue,
   parseResumePageActionValue,
   parseResumeSelectActionValue,
   parseThinkingActionValue,
@@ -90,6 +91,15 @@ export function createCardActionHandler(
       return buildThinkingCard(selectedThinking.key, currentModel, thinking);
     }
 
+    const modelPage = parseModelPageActionValue(action.value);
+    if (modelPage) {
+      const [models, currentModel] = await Promise.all([
+        conversations.getAvailableModels(),
+        conversations.getSelectedModel(modelPage.key),
+      ]);
+      return buildModelCard(modelPage.key, models, currentModel, modelPage.page);
+    }
+
     const selected = parseModelActionValue(action.value);
     if (!selected) return;
     await conversations.selectModel(selected.key, selected.provider, selected.modelId, async (reply) => {
@@ -97,7 +107,7 @@ export function createCardActionHandler(
     });
     const models = await conversations.getAvailableModels();
     const currentModel = await conversations.getSelectedModel(selected.key);
-    return buildModelCard(selected.key, models, currentModel);
+    return buildModelCard(selected.key, models, currentModel, selected.page);
   };
 }
 

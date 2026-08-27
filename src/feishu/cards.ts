@@ -28,18 +28,28 @@ export type ResumeSessionPage = {
   items: ResumeSessionItem[];
 };
 
-export function buildModelCard(key: string, models: RuntimeModel[], currentModel: RuntimeModel | undefined) {
+export const MODEL_PAGE_SIZE = 20;
+
+export function buildModelCard(key: string, models: RuntimeModel[], currentModel: RuntimeModel | undefined, page = 0) {
   const current = modelLabel(currentModel);
+  const totalPages = Math.max(1, Math.ceil(models.length / MODEL_PAGE_SIZE));
+  const safePage = Math.min(Math.max(0, Math.floor(page)), totalPages - 1);
+  const pageModels = models.slice(safePage * MODEL_PAGE_SIZE, (safePage + 1) * MODEL_PAGE_SIZE);
   const elements: any[] = [
     {
       tag: "markdown",
-      content: `当前模型：**${current}**\n点击下面的按钮即可切换当前飞书会话使用的模型。`,
+      content: [
+        `当前模型：**${current}**`,
+        totalPages > 1
+          ? `第 **${safePage + 1} / ${totalPages}** 页，共 **${models.length}** 个模型，点击按钮切换当前飞书会话使用的模型。`
+          : "点击下面的按钮即可切换当前飞书会话使用的模型。",
+      ].join("\n"),
     },
   ];
 
   const rows: any[][] = [];
-  for (let i = 0; i < models.length; i += 2) {
-    rows.push(models.slice(i, i + 2));
+  for (let i = 0; i < pageModels.length; i += 2) {
+    rows.push(pageModels.slice(i, i + 2));
   }
 
   for (const row of rows) {
@@ -59,9 +69,40 @@ export function buildModelCard(key: string, models: RuntimeModel[], currentModel
             key,
             provider: model.provider,
             modelId: model.id,
+            page: safePage,
           },
         };
       }),
+    });
+  }
+
+  if (totalPages > 1) {
+    elements.push({
+      tag: "action",
+      actions: [
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: "上一页" },
+          type: "default",
+          disabled: safePage <= 0,
+          value: {
+            action: "pi_feishu_model_page",
+            key,
+            page: Math.max(0, safePage - 1),
+          },
+        },
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: "下一页" },
+          type: "default",
+          disabled: safePage >= totalPages - 1,
+          value: {
+            action: "pi_feishu_model_page",
+            key,
+            page: Math.min(totalPages - 1, safePage + 1),
+          },
+        },
+      ],
     });
   }
 
@@ -216,12 +257,22 @@ export function buildResumeCard(data: ResumeSessionPage) {
   };
 }
 
-export function parseModelActionValue(value: unknown): { key: string; provider: string; modelId: string } | undefined {
+export function parseModelActionValue(value: unknown): { key: string; provider: string; modelId: string; page: number } | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as any;
   if (raw.action !== "pi_feishu_select_model") return undefined;
   if (typeof raw.key !== "string" || typeof raw.provider !== "string" || typeof raw.modelId !== "string") return undefined;
-  return { key: raw.key, provider: raw.provider, modelId: raw.modelId };
+  const page = typeof raw.page === "number" && Number.isFinite(raw.page) ? Math.max(0, Math.floor(raw.page)) : 0;
+  return { key: raw.key, provider: raw.provider, modelId: raw.modelId, page };
+}
+
+export function parseModelPageActionValue(value: unknown): { key: string; page: number } | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as any;
+  if (raw.action !== "pi_feishu_model_page") return undefined;
+  if (typeof raw.key !== "string") return undefined;
+  if (typeof raw.page !== "number" || !Number.isFinite(raw.page)) return undefined;
+  return { key: raw.key, page: Math.max(0, Math.floor(raw.page)) };
 }
 
 export function parseThinkingActionValue(value: unknown): { key: string; level: string } | undefined {
