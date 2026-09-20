@@ -46,6 +46,12 @@ type LocksFile = Record<string, unknown>;
 
 export type GatewayLockResult =
   | { status: "acquired"; handle: GatewayLockHandle }
+  /**
+   * 锁由**本进程**持有：不是冲突。调用方应视为"已启动"，不得据此退出或重复启动。
+   * 携带 owner 是为了让调用方按真实状态（starting/connected/disconnected）渲染，
+   * 而不是写死文案 —— "自持"与"被他人占用"的对外呈现必须不同。
+   */
+  | { status: "self-held"; owner: GatewayOwner }
   | { status: "busy"; owner: GatewayOwner };
 
 export class GatewayLockHandle {
@@ -121,6 +127,14 @@ export async function acquireGatewayLock(cwd: string, force = false, appId?: str
     const locks = readLocksFile();
     const existing = asGatewayOwner(locks[key], key);
     if (existing && !force && !isStale(existing)) {
+      // 同进程重入：锁本就由本进程持有。扩展工厂可能在同一进程内被重复调用
+      // （任何第三方扩展调用 DefaultResourceLoader.reload() 都会重新初始化工厂），
+      // 此时第二次进入会撞上自己的锁。这不是"被其它实例占用"，
+      // 若误报为 busy，调用方会据此退出进程（daemon 自杀）。
+      if (existing.pid === process.pid) {
+        debugLog("feishu.gateway.lock_self_held", { pid: existing.pid, status: existing.status });
+        return { status: "self-held", owner: existing };
+      }
       debugLog("feishu.gateway.lock_busy", {
         ownerPid: existing.pid,
         heartbeatAt: existing.heartbeatAt,

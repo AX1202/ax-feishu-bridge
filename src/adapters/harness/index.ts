@@ -106,6 +106,15 @@ function startFeishu(ctx: Context, cfg: FeishuConfig) {
       // 与 Pi daemon 等进程共用 gateway lock（按机器人凭证区分），保证同一机器人只有一个连接
       connectionStatus = "连接中 / connecting";
       const lockResult = await acquireGatewayLock(process.cwd(), false, cfg.appId);
+      if (lockResult.status === "self-held") {
+        // 本进程已持有该机器人的连接（重复初始化），跳过而不是误报"被其他进程占用"。
+        // 按 owner.status 渲染真实状态，而不是硬编码"已连接"（此时 transport 可能仍在建连）。
+        console.log(`[feishu] 本进程已持有飞书连接（${lockResult.owner.status}），跳过重复启动。`);
+        connectionStatus = lockResult.owner.status === "connected"
+          ? "已连接 / connected"
+          : "连接中 / connecting";
+        return;
+      }
       if (lockResult.status === "busy") {
         console.log(`[feishu] 飞书连接已被其他进程占用（pid=${lockResult.owner.pid}），本插件不启动。`);
         connectionStatus = `被其他进程占用（pid=${lockResult.owner.pid}）/ owned by another process`;

@@ -25,6 +25,24 @@ import { createCardActionHandler } from "../../feishu/card-actions.ts";
 import { PiConversationRuntime, handlePiMessageEnd } from "./PiConversationRuntime.ts";
 
 /**
+ * 网关状态（transport / gatewayLock / 启动标记）必须存放在**模块作用域**，
+ * 而不是扩展工厂的闭包作用域。
+ *
+ * 原因：同一进程内扩展工厂可能被重复调用。除 daemon 自己的 loader.reload()
+ * （已被 CHILD_SESSION_ENV 守卫挡掉）外，任何第三方扩展调用
+ * `DefaultResourceLoader.reload()` 都会重新初始化本扩展工厂
+ * （例如 pi-shadow-mind 的 ShadowRunner.bootstrapSession()）。
+ *
+ * 工厂闭包内的 `let transport` 每次调用都是全新的 undefined，会让
+ * `if (transport?.isRunning())` 去重守卫彻底失效，于是第二次调用会再次
+ * acquireGatewayLock()，并因"自持被误报为 busy"而 process.exit(0)。
+ */
+let transport: FeishuTransport | undefined;
+let gatewayLock: GatewayLockHandle | undefined;
+/** 启动块每个进程只执行一次（重复调用不得再 start()/startDaemon()）。 */
+let gatewayBootAttempted = false;
+
+/**
  * Pi Runtime 适配器的扩展入口（薄 PI bootstrap）：
  * 只保留 Pi 相关的启动/命令/daemon/工具注册逻辑，
  * 其余飞书逻辑全部在 src/feishu 公共层。
@@ -46,8 +64,8 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
   // 是会话级 API，在扩展加载期（session_start 之前）调用会抛错，导致后续
   // /feishu 命令注册等逻辑全部不执行。隐藏逻辑统一放在 session_start 里。
 
-  let transport: FeishuTransport | undefined;
-  let gatewayLock: GatewayLockHandle | undefined;
+  // 注意：transport / gatewayLock 声明在模块作用域（见文件上方），
+  // 以便工厂被重复调用时仍能识别"本进程已启动网关"。
   const bridgeStore = new FeishuBridgeStore();
   const delivery = new FeishuDelivery(() => transport);
   const bridge = new FeishuBridgeRuntime(bridgeStore, delivery);
@@ -155,6 +173,14 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
     }
     updateStatus("connecting");
     const lockResult = await acquireGatewayLock(process.cwd(), Boolean(options.takeover), cfg.appId);
+    if (lockResult.status === "self-held") {
+      // 本进程已持有网关（工厂被重复调用）：属于"已启动"，不是"被他人占用"。
+      // 注意不能写 updateStatus("owned") —— 该状态的文案是"连接被占用"，
+      // 与本分支语义相反。按锁里记录的真实状态渲染。
+      const ownerStatus = lockResult.owner.status;
+      updateStatus(ownerStatus === "starting" ? "connecting" : ownerStatus);
+      return "already";
+    }
     if (lockResult.status === "busy") {
       updateStatus("owned");
       return { status: "owned" as const, owner: lockResult.owner };
@@ -474,7 +500,11 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
     hideFeishuConfigTools(pi);
   });
 
-  if (bootConfig?.autoStart) {
+  if (bootConfig?.autoStart && !gatewayBootAttempted) {
+    // 同步占位：拦住同一进程内的并发重入（同一次 reload 周期里工厂可能被调用多次），
+    // 避免重复 spawn / 重复 start() 又撞上自己的锁。
+    // 注意：它只是幂等闸门，**不应顺带取消失败重试** —— 故失败分支会把它放开。
+    gatewayBootAttempted = true;
     if (process.env.PI_FEISHU_DAEMON === "1") {
       start().then((result) => {
         if (typeof result === "object" && result.status === "owned") {
@@ -488,6 +518,10 @@ export default function createPiFeishuExtension(pi: ExtensionAPI, options?: { ex
       });
     } else {
       startDaemon(false).catch((error) => {
+        // 放开闸门：本进程后续的工厂重入仍可重试。
+        // 否则一次瞬时失败（spawn 失败等）会让该进程内永久不再尝试启动，
+        // 只能靠用户手动 /feishu restart —— 体感与"静默掉线"无异。
+        gatewayBootAttempted = false;
         updateStatus("disconnected");
         console.error("[feishu] daemon spawn failed:", error instanceof Error ? error.message : error);
       });
