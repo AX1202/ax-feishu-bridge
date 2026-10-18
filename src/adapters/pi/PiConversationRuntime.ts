@@ -187,10 +187,12 @@ export class PiConversationRuntime implements ConversationRuntime {
     try {
       const session = await this.getSession(key);
       const anySession = session as any;
-      const tokens = anySession.contextTokens ?? anySession.tokenCount ?? null;
-      const contextWindow = anySession.contextWindow ?? anySession.model?.contextWindow ?? null;
-      const percent = tokens != null && contextWindow ? (Number(tokens) / Number(contextWindow)) * 100 : null;
-      return { tokens: tokens != null ? Number(tokens) : null, contextWindow: contextWindow != null ? Number(contextWindow) : null, percent };
+      // AgentSession 没有 contextTokens/tokenCount 属性，正确接口是 getContextUsage()。
+      // 返回 { tokens: number | null, contextWindow: number, percent: number | null }，
+      // 与 ContextUsage 形状一致；压缩后未收到新回复时 tokens 为 null 属正常。
+      const usage = typeof anySession.getContextUsage === "function" ? anySession.getContextUsage() : undefined;
+      if (!usage) return null;
+      return { tokens: usage.tokens ?? null, contextWindow: usage.contextWindow ?? null, percent: usage.percent ?? null };
     } catch {
       return null;
     }
