@@ -99,11 +99,19 @@ export class FeishuTransport {
       });
     }
 
+    // Liveness watchdog: after a network switch (Wi-Fi <-> wired, sleep/wake)
+    // the WebSocket can go half-dead — the kernel keeps the socket ESTAB and
+    // retransmits forever, so the SDK never receives close/error and its
+    // auto-reconnect never fires. The gateway heartbeat (locks.json) keeps
+    // saying "connected" while no events arrive. `pingTimeout` (SDK >= 1.64.0)
+    // terminates the socket when no inbound frame arrives within N seconds of
+    // our ping, which routes into the SDK's normal reconnect flow.
     this.wsClient = new lark.WSClient({
       appId: this.config.appId,
       appSecret: this.config.appSecret,
       domain,
       loggerLevel: lark.LoggerLevel.error,
+      wsConfig: { pingTimeout: 30 },
     });
 
     this.running = true;
